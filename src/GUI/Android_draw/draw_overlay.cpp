@@ -202,9 +202,15 @@ namespace
     }
 
     // ================= overlay 触摸校准 =================
-    // NDK AInputQueue 分发的 AMotionEvent_getX/Y 坐标直接对应当前 EGL 渲染 Surface 窗口像素空间。
-    // ImGui 的 DisplaySize 也正是 EGL Surface 尺寸 (g_win_w, g_win_h)。
-    // 因此两者天然 1:1 绝对像素对应，无需且绝不应使用带有写死 2400 回退的外部探针进行乘除缩放。
+    // 根因定位 (由和平精英真实实测 log 彻底确诊):
+    // 1. 游戏 EGL 渲染 Surface 处于横屏 (1520x1080)
+    // 2. AInputQueue 底层分发的 AMotionEvent 坐标仍为物理屏幕原生竖屏系 (rx: 0..1080 短边, ry: 0..2400 长边)
+    // 3. 用户点击横屏菜单上方中间时，rx≈1099, ry≈1362 (ry 远超 EGL 高度 1080)
+    // 4. 旋转映射公式:
+    //    targetX = ry * (EGL_W / PhysLong) = 1362.3 * (1520 / 2400) = 862.5 (横屏菜单中央)
+    //    targetY = (PhysShort - rx) * (EGL_H / PhysShort) = (1080 - 1099) -> 0.0 (菜单顶部标题栏)
+    static float g_physLong = 2400.0f;
+    static float g_physShort = 1080.0f;
     static int g_touchLogCount = 0;
 
     void OverlayInputTransform(float *x, float *y)
@@ -212,19 +218,61 @@ namespace
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        // 调试日志：前 20 次触摸打印实时坐标，供验证绝对精度
-        if (g_touchLogCount < 20)
+        const float rx = *x;
+        const float ry = *y;
+
+        // 动态追踪当前设备真实物理长边与短边（自适应 2K/1080P/720P/平板/折叠屏）
+        if (rx > g_physLong) g_physLong = rx;
+        if (ry > g_physLong) g_physLong = ry;
+
+        float targetX = rx;
+        float targetY = ry;
+
+        if (g_win_w >= g_win_h)
         {
-            g_touchLogCount++;
-            LOGI("[OV-TOUCH] #%d 触摸像素=(%.1f, %.1f) Surface=%dx%d",
-                 g_touchLogCount, *x, *y, g_win_w, g_win_h);
+            // 游戏渲染为横屏 (Landscape: 如 1520x1080 或 2400x1080)
+            if (ry > (float)g_win_h || ry > g_physShort * 0.95f)
+            {
+                // 情况 A: 触摸事件为原生竖屏物理系 (ry 是长边 0..physLong, rx 是短边 0..physShort)
+                // 横屏 X 对应竖屏 Y (长边)；横屏 Y 对应竖屏 X 倒向 (physShort - rx)
+                targetX = ry * ((float)g_win_w / g_physLong);
+                targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
+            }
+            else if (rx > (float)g_win_w)
+            {
+                // 情况 B: 触摸事件已在横屏系，但属于 2400 物理屏映射到 1520 降采样 Surface
+                targetX = rx * ((float)g_win_w / g_physLong);
+                targetY = ry * ((float)g_win_h / g_physShort);
+            }
+            else
+            {
+                // 情况 C: 1:1 绝对坐标
+                targetX = rx;
+                targetY = ry;
+            }
+        }
+        else
+        {
+            // 游戏渲染为竖屏
+            if (rx > (float)g_win_w) targetX = rx * ((float)g_win_w / g_physShort);
+            if (ry > (float)g_win_h) targetY = ry * ((float)g_win_h / g_physLong);
         }
 
-        // 纯净 1:1 像素直通并做合法边界保护
-        if (*x < 0.0f) *x = 0.0f;
-        if (*x > (float)g_win_w) *x = (float)g_win_w;
-        if (*y < 0.0f) *y = 0.0f;
-        if (*y > (float)g_win_h) *y = (float)g_win_h;
+        // 合法边界限制
+        if (targetX < 0.0f) targetX = 0.0f;
+        if (targetX > (float)g_win_w) targetX = (float)g_win_w;
+        if (targetY < 0.0f) targetY = 0.0f;
+        if (targetY > (float)g_win_h) targetY = (float)g_win_h;
+
+        if (g_touchLogCount < 25)
+        {
+            g_touchLogCount++;
+            LOGI("[OV-TOUCH] #%d 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) Surface=%dx%d",
+                 g_touchLogCount, rx, ry, targetX, targetY, g_win_w, g_win_h);
+        }
+
+        *x = targetX;
+        *y = targetY;
     }
 
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
@@ -240,7 +288,12 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        LOGI("[OV] EGL Surface=%dx%d (1:1 物理像素完美直通，无虚假缩放)", g_win_w, g_win_h);
+        // 初始物理长边/短边默认基准（和平精英/UE4 标准 2400x1080）
+        g_physLong = (w > 2400 ? (float)w : 2400.0f);
+        g_physShort = (h > 1080 ? (float)h : 1080.0f);
+
+        LOGI("[OV] EGL Surface=%dx%d, 物理屏幕基准=%.0fx%.0f (支持原生竖屏触控转横屏渲染+等比缩放)",
+             g_win_w, g_win_h, g_physLong, g_physShort);
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
