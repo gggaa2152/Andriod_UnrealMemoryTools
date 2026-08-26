@@ -18,6 +18,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <GLES3/gl3.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -420,8 +422,8 @@ namespace
         }
 
         // 🎯 屏幕右上角浮动快捷切换小药丸（单点直接切换 90°/270°/1:1）
-        ImGui::SetNextWindowPos(ImVec2(g_win_w - 240.0f, 12.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(230.0f, 42.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2((float)g_win_w - 240.0f, 12.0f), 0);
+        ImGui::SetNextWindowSize(ImVec2(230.0f, 42.0f), 0);
         ImGui::Begin("##TouchDirSwitch", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         char btnText[64];
         snprintf(btnText, sizeof(btnText), "🔄 触控:%s", (OverlayUI::g_touchMode == 2 ? "270°(口在左)" : (OverlayUI::g_touchMode == 1 ? "90°(口在右)" : "1:1直通")));

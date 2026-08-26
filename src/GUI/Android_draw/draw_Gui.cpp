@@ -152,11 +152,11 @@ void Layout_tick_UI(bool *main_thread_flag) {
         // 触控方向快速校准（支持 90° / 270° / 1:1 单击切换）
         ImGui::TextDisabled("触控方向:");
         ImGui::SameLine();
-        if (ImGui::RadioButton("90°(口在右)", OverlayUI::g_touchMode == 1)) OverlayUI::g_touchMode = 1;
+        ImGui::RadioButton("90°(口在右)", &OverlayUI::g_touchMode, 1);
         ImGui::SameLine();
-        if (ImGui::RadioButton("270°(口在左)", OverlayUI::g_touchMode == 2)) OverlayUI::g_touchMode = 2;
+        ImGui::RadioButton("270°(口在左)", &OverlayUI::g_touchMode, 2);
         ImGui::SameLine();
-        if (ImGui::RadioButton("1:1直通", OverlayUI::g_touchMode == 0)) OverlayUI::g_touchMode = 0;
+        ImGui::RadioButton("1:1直通", &OverlayUI::g_touchMode, 0);
         ImGui::Separator();
 
         RenderAutoUEDumpPanel(main_thread_flag);
