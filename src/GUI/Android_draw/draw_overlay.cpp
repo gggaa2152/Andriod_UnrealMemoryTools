@@ -214,58 +214,51 @@ namespace
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        const float rx = *x;
-        const float ry = *y;
-
-        // 动态追踪最大物理长边与短边（自适应 平板3392x2400 / 手机2400x1080 / 2K屏）
-        if (rx > g_physShort && rx > g_physLong) g_physLong = rx;
-        else if (rx > g_physShort) g_physShort = rx;
-        if (ry > g_physLong) g_physLong = ry;
-
+        // 【核心修复】Android 的 AInputQueue_getEvent 拿到的 AInputEvent (经 AMotionEvent_getX 提取) 
+        // 已经是经过系统 InputDispatcher 处理过、映射到当前 Window / View 的相对坐标。
+        // 它已经包含了屏幕旋转（横竖屏）的修正。
+        // 绝大部分情况下，直接将这个坐标传给 ImGui 即可，不需要再次进行 g_physLong 的等比缩放或 XY 轴互换！
+        
+        // 我们提供一个配置项或者直接直通
+        float rx = *x;
+        float ry = *y;
         float targetX = rx;
         float targetY = ry;
-        const char* modeStr = "1:1直通";
+        const char* modeStr = "绝对直通(不缩放不旋转)";
 
-        if (g_win_w >= g_win_h)
-        {
-            // 游戏为横屏渲染 (Landscape)
-            if (g_touchMode == 2) {
-                // 逆时针横屏 270° (充电口在左侧，摄像头在右)
-                modeStr = "横屏270°(口在左)";
-                targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
-                targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
-            } else if (g_touchMode == 1) {
-                // 顺时针横屏 90° (充电口在右侧，摄像头在左，标准持机方向)
-                modeStr = "横屏90°(口在右)";
-                targetX = ry * ((float)g_win_w / g_physLong);
-                targetY = rx * ((float)g_win_h / g_physShort);
-            } else {
-                // 1:1 直通等比缩放
-                modeStr = "横屏直通缩放";
-                targetX = rx * ((float)g_win_w / g_physLong);
-                targetY = ry * ((float)g_win_h / g_physShort);
-            }
-        }
-        else
-        {
-            // 竖屏游戏
-            modeStr = "竖屏系";
-            targetX = rx * ((float)g_win_w / g_physShort);
-            targetY = ry * ((float)g_win_h / g_physLong);
+        if (g_touchMode == 1) {
+            // 旧逻辑：顺时针90度 (强制物理比例)
+            modeStr = "横屏90°(强制物理比例)";
+            targetX = ry * ((float)g_win_w / 3392.0f);
+            targetY = rx * ((float)g_win_h / 2400.0f);
+        } else if (g_touchMode == 2) {
+            // 旧逻辑：逆时针270度
+            modeStr = "横屏270°(强制物理比例)";
+            targetX = (3392.0f - ry) * ((float)g_win_w / 3392.0f);
+            targetY = (2400.0f - rx) * ((float)g_win_h / 2400.0f);
+        } else if (g_touchMode == 3) {
+            // 旧逻辑：1:1 等比缩放 (如果窗口分辨率和事件分辨率不一致)
+            modeStr = "直通等比缩放";
+            targetX = rx * ((float)g_win_w / 3392.0f);
+            targetY = ry * ((float)g_win_h / 2400.0f);
+        } else {
+            // 默认模式 0：绝对直通。完全信任 Android 系统的坐标映射。
+            targetX = rx;
+            targetY = ry;
         }
 
-        // 合法边界保护
+        // 依然保留合法边界保护，防止因为越界导致 ImGui 异常
         if (targetX < 0.0f) targetX = 0.0f;
         if (targetX > (float)g_win_w) targetX = (float)g_win_w;
         if (targetY < 0.0f) targetY = 0.0f;
         if (targetY > (float)g_win_h) targetY = (float)g_win_h;
 
-        // 全链路日志（实时输出到 /data/1/unrealmt.log 与 logcat）
+        // 仅在最开始的 60 次触摸打印日志，方便用户使用 logcat 诊断
         if (g_touchLogCount < 60)
         {
             g_touchLogCount++;
-            LOGI("[CHAIN-TOUCH] #%d [%s] 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) | Surface=%dx%d Phys=%.0fx%.0f",
-                 g_touchLogCount, modeStr, rx, ry, targetX, targetY, g_win_w, g_win_h, g_physLong, g_physShort);
+            LOGI("[CHAIN-TOUCH] #%d [%s] 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) | Surface=%dx%d",
+                 g_touchLogCount, modeStr, rx, ry, targetX, targetY, g_win_w, g_win_h);
         }
 
         *x = targetX;
