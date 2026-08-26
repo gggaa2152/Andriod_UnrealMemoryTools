@@ -27,20 +27,31 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y ninja-build cmake
 
-      - name: Configure (CMake)
+      - name: Configure & Build (UnrealMemoryTools)
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Android
+          cmake --build build -j $(nproc)
 
-      - name: Build
-        run: cmake --build build -j $(nproc)
+      - name: Configure & Build (injector)
+        run: |
+          cmake -S injector -B build-injector -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Android
+          cmake --build build-injector -j $(nproc)
 
-      - name: List output
-        run: ls -lh outputs/arm64-v8a/
+      - name: List outputs
+        run: |
+          ls -lh outputs/arm64-v8a/
+          ls -lh injector/outputs/arm64-v8a/
 
-      - name: Upload artifact
+      - name: Upload libUnrealMemoryTools.so
         uses: actions/upload-artifact@v4
         with:
           name: libUnrealMemoryTools-arm64-v8a
           path: outputs/arm64-v8a/
+          if-no-files-found: error
+
+      - name: Upload injector
+        uses: actions/upload-artifact@v4
+        with:
+          name: injector-arm64-v8a
+          path: injector/outputs/arm64-v8a/injector
           if-no-files-found: error
