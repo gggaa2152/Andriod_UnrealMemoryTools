@@ -217,11 +217,10 @@ namespace
         const float rx = *x;
         const float ry = *y;
 
-        // 动态追踪窗口最大输入坐标范围（通常等于屏幕物理分辨率或逻辑分辨率）
-        // 用户反馈是 3392x2400 的 3K 平板
-        if (rx > g_physShort && rx > g_physLong) g_physLong = rx;
-        else if (rx > g_physShort) g_physShort = rx;
-        if (ry > g_physLong) g_physLong = ry;
+        // 【致命错误修复】：删除了之前的“动态追踪屏幕宽高”的逻辑。
+        // 原来的逻辑会在你触摸屏幕右侧（X较大）时，错误地把 g_physShort（屏幕短边）也放大到 3392。
+        // 这导致了计算 Y 轴缩放比例时，分母变成了 3392（本来应该是 2400），从而导致“屏幕上面准，越靠下面越不准（光标偏上）”的现象。
+        // 现在我们直接锁定为你 3K 平板的实际物理输入尺寸：长边 3392，短边 2400。
 
         float targetX = rx;
         float targetY = ry;
