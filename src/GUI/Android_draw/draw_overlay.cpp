@@ -203,7 +203,7 @@ namespace
 
 namespace OverlayUI
 {
-    int g_touchMode = 2; // 默认 2: 逆时针横屏270° (实测和平精英主流方向)  1: 顺时针横屏90°  0: 1:1直通
+    int g_touchMode = 1; // 默认 1: 顺时针横屏90° (充电口向右)  2: 逆时针横屏270° (充电口向左)  0: 1:1直通
 }
 
 namespace
@@ -235,15 +235,17 @@ namespace
             if (ry > (float)g_win_h || ry > g_physShort * 0.90f)
             {
                 if (OverlayUI::g_touchMode == 2) {
-                    // 逆时针横屏 270° (充电口在左侧)
+                    // 逆时针横屏 270° (充电口在左侧，摄像头在右)
+                    // 屏幕左上(rx=1080, ry=2400)->(0,0), 右下(rx=0, ry=0)->(W,H)
                     modeStr = "横屏270°(充电口在左)";
                     targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
-                    targetY = rx * ((float)g_win_h / g_physShort);
-                } else {
-                    // 顺时针横屏 90° (充电口在右侧，最主流方向)
-                    modeStr = "横屏90°(充电口在右)";
-                    targetX = ry * ((float)g_win_w / g_physLong);
                     targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
+                } else {
+                    // 顺时针横屏 90° (充电口在右侧，摄像头在左，标准持机方向)
+                    // 屏幕左上(rx=0, ry=0)->(0,0), 右下(rx=1080, ry=2400)->(W,H)
+                    modeStr = "横屏90°(充电口向右)";
+                    targetX = ry * ((float)g_win_w / g_physLong);
+                    targetY = rx * ((float)g_win_h / g_physShort);
                 }
             }
             else if (rx > (float)g_win_w)
