@@ -7,8 +7,8 @@
 #include "Android_Graphics/OpenGLGraphics.h"
 #include "imgui_impl_opengl3.h"
 #include "my_imgui_impl_android.h"
-#include "Utils/Logger.hpp"  // LOGI/LOGE（kEXECUTABLE 下写文件 + printf）
-#include "UE/UEMemory.hpp"   // UEMemory::kMgr（DIRECT 模式）
+#include "../../Utils/Logger.hpp"  // LOGI/LOGE（kEXECUTABLE 下写文件 + printf）
+#include "../../UE/UEMemory.hpp"   // UEMemory::kMgr（DIRECT 模式）
 
 #include <android/input.h>
 #include <dlfcn.h>
