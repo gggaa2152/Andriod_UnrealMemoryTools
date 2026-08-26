@@ -228,34 +228,30 @@ namespace
 
         if (g_win_w >= g_win_h)
         {
-            // 游戏渲染为横屏 (Landscape: 如 1520x1080 或 2400x1080)
-            if (ry > (float)g_win_h || ry > g_physShort * 0.85f)
-            {
-                if (g_touchMode == 2) {
-                    // 逆时针横屏 270° (充电口在左侧，摄像头在右)
-                    modeStr = "横屏270°(充电口在左)";
-                    targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
-                    targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
-                } else {
-                    // 顺时针横屏 90° (充电口在右侧，摄像头在左，标准持机方向)
-                    modeStr = "横屏90°(充电口向右)";
-                    targetX = ry * ((float)g_win_w / g_physLong);
-                    targetY = rx * ((float)g_win_h / g_physShort);
-                }
-            }
-            else
-            {
-                modeStr = "横屏1:1绝对坐标";
-                targetX = rx;
-                targetY = ry;
+            // 游戏为横屏渲染 (Landscape)
+            if (g_touchMode == 2) {
+                // 逆时针横屏 270° (充电口在左侧，摄像头在右)
+                modeStr = "横屏270°(口在左)";
+                targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
+                targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
+            } else if (g_touchMode == 1) {
+                // 顺时针横屏 90° (充电口在右侧，摄像头在左，标准持机方向)
+                modeStr = "横屏90°(口在右)";
+                targetX = ry * ((float)g_win_w / g_physLong);
+                targetY = rx * ((float)g_win_h / g_physShort);
+            } else {
+                // 1:1 直通等比缩放
+                modeStr = "横屏直通缩放";
+                targetX = rx * ((float)g_win_w / g_physLong);
+                targetY = ry * ((float)g_win_h / g_physShort);
             }
         }
         else
         {
             // 竖屏游戏
             modeStr = "竖屏系";
-            if (rx > (float)g_win_w) targetX = rx * ((float)g_win_w / g_physShort);
-            if (ry > (float)g_win_h) targetY = ry * ((float)g_win_h / g_physLong);
+            targetX = rx * ((float)g_win_w / g_physShort);
+            targetY = ry * ((float)g_win_h / g_physLong);
         }
 
         // 合法边界保护
