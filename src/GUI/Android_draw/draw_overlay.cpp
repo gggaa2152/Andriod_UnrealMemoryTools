@@ -203,17 +203,11 @@ namespace
         return anyHooked;
     }
 
-namespace OverlayUI
-{
-    int g_touchMode = 1; // 默认 1: 顺时针横屏90° (充电口向右)  2: 逆时针横屏270° (充电口向左)  0: 1:1直通
-}
-
-namespace
-{
     // ================= overlay 触摸校准与全链路诊断 =================
-    static float g_physLong = 2400.0f;
-    static float g_physShort = 1080.0f;
+    static float g_physLong = 3392.0f;
+    static float g_physShort = 2400.0f;
     static int g_touchLogCount = 0;
+    static int g_touchMode = 1; // 1: 顺时针横屏90° (充电口向右)  2: 逆时针横屏270° (充电口向左)  0: 1:1直通
 
     void OverlayInputTransform(float *x, float *y)
     {
@@ -223,7 +217,7 @@ namespace
         const float rx = *x;
         const float ry = *y;
 
-        // 动态追踪最大物理长边与短边（自适应 2K/1080P/720P/折叠屏/平板 3392x2400）
+        // 动态追踪最大物理长边与短边（自适应 平板3392x2400 / 手机2400x1080 / 2K屏）
         if (rx > g_physShort && rx > g_physLong) g_physLong = rx;
         else if (rx > g_physShort) g_physShort = rx;
         if (ry > g_physLong) g_physLong = ry;
@@ -235,27 +229,19 @@ namespace
         if (g_win_w >= g_win_h)
         {
             // 游戏渲染为横屏 (Landscape: 如 1520x1080 或 2400x1080)
-            if (ry > (float)g_win_h || ry > g_physShort * 0.90f)
+            if (ry > (float)g_win_h || ry > g_physShort * 0.85f)
             {
-                if (OverlayUI::g_touchMode == 2) {
+                if (g_touchMode == 2) {
                     // 逆时针横屏 270° (充电口在左侧，摄像头在右)
-                    // 屏幕左上(rx=1080, ry=2400)->(0,0), 右下(rx=0, ry=0)->(W,H)
                     modeStr = "横屏270°(充电口在左)";
                     targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
                     targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
                 } else {
                     // 顺时针横屏 90° (充电口在右侧，摄像头在左，标准持机方向)
-                    // 屏幕左上(rx=0, ry=0)->(0,0), 右下(rx=1080, ry=2400)->(W,H)
                     modeStr = "横屏90°(充电口向右)";
                     targetX = ry * ((float)g_win_w / g_physLong);
                     targetY = rx * ((float)g_win_h / g_physShort);
                 }
-            }
-            else if (rx > (float)g_win_w)
-            {
-                modeStr = "横屏降采样等比缩放";
-                targetX = rx * ((float)g_win_w / g_physLong);
-                targetY = ry * ((float)g_win_h / g_physShort);
             }
             else
             {
@@ -290,53 +276,6 @@ namespace
         *y = targetY;
     }
 
-    // 自动探测当前设备真实屏幕物理硬件分辨率（支持任意手机/平板 2400x3392/折叠屏/2K）
-    void AutoDetectScreenPhysicalSize(float *outLong, float *outShort)
-    {
-        float pLong = 3392.0f;
-        float pShort = 2400.0f;
-
-        // 1. 从 Android 系统 wm size 查询物理分辨率
-        FILE *fp = popen("wm size 2>/dev/null", "r");
-        if (fp)
-        {
-            char buf[256] = {0};
-            while (fgets(buf, sizeof(buf), fp))
-            {
-                int w = 0, h = 0;
-                if (sscanf(buf, "Physical size: %dx%d", &w, &h) == 2 ||
-                    sscanf(buf, "Override size: %dx%d", &w, &h) == 2)
-                {
-                    if (w > 0 && h > 0)
-                    {
-                        pLong = (w >= h ? (float)w : (float)h);
-                        pShort = (w < h ? (float)w : (float)h);
-                    }
-                }
-            }
-            pclose(fp);
-        }
-
-        // 2. 从 Linux 显卡驱动 fb0 查询
-        if (pLong == 3392.0f && pShort == 2400.0f)
-        {
-            FILE *fb = fopen("/sys/class/graphics/fb0/virtual_size", "r");
-            if (fb)
-            {
-                int w = 0, h = 0;
-                if (fscanf(fb, "%d,%d", &w, &h) == 2 && w > 0 && h > 0)
-                {
-                    pLong = (w >= h ? (float)w : (float)h);
-                    pShort = (w < h ? (float)w : (float)h);
-                }
-                fclose(fb);
-            }
-        }
-
-        *outLong = pLong;
-        *outShort = pShort;
-    }
-
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
     {
         int w = 0, h = 0;
@@ -350,10 +289,7 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        // 自动探测当前设备真实硬件物理尺寸（平板 3392x2400 / 手机 2400x1080 / 2K 3200x1440）
-        AutoDetectScreenPhysicalSize(&g_physLong, &g_physShort);
-
-        LOGI("[OV] EGL Surface=%dx%d, 硬件物理屏幕=%.0fx%.0f (全机型自适应矩阵就绪)",
+        LOGI("[OV] EGL Surface=%dx%d, 物理屏幕基准=%.0fx%.0f (全链路触控自适应+屏幕光标可视化就绪)",
              g_win_w, g_win_h, g_physLong, g_physShort);
 
         ImGui::CreateContext();
@@ -368,22 +304,14 @@ namespace
         My_ImGui_ImplAndroid_Init(nullptr);
         My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);
 
-        // 计算当前 Overlay 分辨率下的 DPI 缩放比例
-        float minDim = (g_win_w < g_win_h) ? (float)g_win_w : (float)g_win_h;
-        float dpiScale = minDim / 1080.0f;
-        if (dpiScale < 0.85f) dpiScale = 0.85f;
-        if (dpiScale > 2.2f)  dpiScale = 2.2f;
+        // 载入中文字体（与原流程一致）
+        init_My_drawdata(0.0f);
 
-        // 复用当前 GL context 做纹理加载（不创建自己的 EGL context）
-        ::graphics = std::make_unique<OpenGLGraphics>();
-        init_My_drawdata(dpiScale);
+        // 触发自动探针 / Dump 线程
+        std::thread(RunAutoProbeDump).detach();
 
         g_ready = true;
-        LOGI("[OV] overlay 初始化完成 EGL=%dx%d (1:1 像素级直通, scale=%.2f)",
-             w, h, dpiScale);
-
-        // 自动执行探针 + SDK Dump（后台线程，菜单实时显示进度）
-        std::thread(RunAutoProbeDump).detach();
+        LOGI("[OV] EGL Overlay 初始化完成，逻辑画布=%dx%d", g_win_w, g_win_h);
     }
 
     void OverlayFrame()
@@ -403,13 +331,12 @@ namespace
 
         Layout_tick_UI(&g_menu_open);
 
-        // 🎯 屏幕实时触控光标轨迹可视化（在画面最顶层绘制触控点与坐标，直观观察触控落点）
+        // 🎯 屏幕实时触控光标轨迹可视化
         if (io.MouseDown[0] || (io.MousePos.x >= 0.0f && io.MousePos.x <= (float)g_win_w && io.MousePos.y >= 0.0f && io.MousePos.y <= (float)g_win_h))
         {
             ImDrawList* fg = ImGui::GetForegroundDrawList();
             if (fg)
             {
-                // 绘制高亮准星与触摸光晕
                 fg->AddCircleFilled(io.MousePos, 16.0f, IM_COL32(0, 255, 120, 180));
                 fg->AddCircle(io.MousePos, 22.0f, IM_COL32(255, 255, 255, 240), 0, 2.5f);
                 fg->AddLine(ImVec2(io.MousePos.x - 28, io.MousePos.y), ImVec2(io.MousePos.x + 28, io.MousePos.y), IM_COL32(255, 255, 0, 200), 1.5f);
@@ -426,11 +353,11 @@ namespace
         ImGui::SetNextWindowSize(ImVec2(230.0f, 42.0f), 0);
         ImGui::Begin("##TouchDirSwitch", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
         char btnText[64];
-        snprintf(btnText, sizeof(btnText), "🔄 触控:%s", (OverlayUI::g_touchMode == 2 ? "270°(口在左)" : (OverlayUI::g_touchMode == 1 ? "90°(口在右)" : "1:1直通")));
+        snprintf(btnText, sizeof(btnText), "🔄 触控:%s", (g_touchMode == 2 ? "270°(口在左)" : (g_touchMode == 1 ? "90°(口在右)" : "1:1直通")));
         if (ImGui::Button(btnText, ImVec2(225.0f, 36.0f)))
         {
-            OverlayUI::g_touchMode = (OverlayUI::g_touchMode == 1 ? 2 : (OverlayUI::g_touchMode == 2 ? 0 : 1));
-            LOGI("[OV-TOUCH] 快捷切换触控方向 -> %s", (OverlayUI::g_touchMode == 2 ? "270°" : (OverlayUI::g_touchMode == 1 ? "90°" : "1:1")));
+            g_touchMode = (g_touchMode == 1 ? 2 : (g_touchMode == 2 ? 0 : 1));
+            LOGI("[OV-TOUCH] 快捷切换触控方向 -> %s", (g_touchMode == 2 ? "270°" : (g_touchMode == 1 ? "90°" : "1:1")));
         }
         ImGui::End();
 
