@@ -188,7 +188,7 @@ __attribute__((constructor))
 void UnrealMemoryTools_OnLoad()
 {
     InstallCrashHandler();
-    LOGI("UnrealMemoryTools (Hook 模式) 已注入，pid=%d, 构建: 2026-08-26j-inputfwd", getpid());
+    LOGI("UnrealMemoryTools (Hook 模式) 已注入，pid=%d, 构建: 2026-08-26k-fixpos", getpid());
 
     static bool started = false;
     if (started)

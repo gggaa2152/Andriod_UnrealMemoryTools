@@ -13,6 +13,18 @@ static double g_Time = 0.0;
 static ANativeWindow *g_Window;
 static char g_LogTag[] = "ImGuiExample";
 
+// 触摸坐标变换（overlay 模式注入，默认无）
+static InputTransformFn g_InputTransform = nullptr;
+
+void My_ImGui_ImplAndroid_SetInputTransform(InputTransformFn fn) {
+    g_InputTransform = fn;
+}
+
+static inline void ApplyInputTransform(float *x, float *y) {
+    if (g_InputTransform)
+        g_InputTransform(x, y);
+}
+
 static ImGuiKey ImGui_ImplAndroid_KeyCodeToImGuiKey(int32_t key_code) {
     switch (key_code) {
         case AKEYCODE_TAB:
@@ -294,8 +306,10 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
                     if ((AMotionEvent_getToolType(input_event, event_pointer_index) == AMOTION_EVENT_TOOL_TYPE_FINGER)
                         || (AMotionEvent_getToolType(input_event, event_pointer_index) ==
                             AMOTION_EVENT_TOOL_TYPE_UNKNOWN)) {
-                        io.AddMousePosEvent(AMotionEvent_getX(input_event, event_pointer_index),
-                                            AMotionEvent_getY(input_event, event_pointer_index));
+                        float mx = AMotionEvent_getX(input_event, event_pointer_index);
+                        float my = AMotionEvent_getY(input_event, event_pointer_index);
+                        ApplyInputTransform(&mx, &my);
+                        io.AddMousePosEvent(mx, my);
                         io.AddMouseButtonEvent(0, event_action == AMOTION_EVENT_ACTION_DOWN);
                     }
                     break;
@@ -309,8 +323,12 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
                     break;
                 case AMOTION_EVENT_ACTION_HOVER_MOVE: // Hovering: Tool moves while NOT pressed (such as a physical mouse)
                 case AMOTION_EVENT_ACTION_MOVE:       // Touch pointer moves while DOWN
-                    io.AddMousePosEvent(AMotionEvent_getX(input_event, event_pointer_index),
-                                        AMotionEvent_getY(input_event, event_pointer_index));
+                {
+                    float mx = AMotionEvent_getX(input_event, event_pointer_index);
+                    float my = AMotionEvent_getY(input_event, event_pointer_index);
+                    ApplyInputTransform(&mx, &my);
+                    io.AddMousePosEvent(mx, my);
+                }
                     break;
                 case AMOTION_EVENT_ACTION_SCROLL:
                     io.AddMouseWheelEvent(

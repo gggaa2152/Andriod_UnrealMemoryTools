@@ -199,6 +199,29 @@ namespace
     }
 
     // ================= overlay 渲染 =================
+    // 触摸坐标自适应变换：
+    // 触摸事件给的是物理屏坐标（如 2400x2400），ImGui 画布是渲染 surface（1520x1080）。
+    // 动态学习触摸坐标的最大范围（= 物理分辨率），等比缩放到 surface 尺寸。
+    void OverlayInputTransform(float *x, float *y)
+    {
+        static float physW = 0.f, physH = 0.f;
+        static bool logged = false;
+        if (*x > physW) physW = *x;
+        if (*y > physH) physH = *y;
+
+        if (g_win_w > 0 && g_win_h > 0)
+        {
+            if (physW > 0.f) *x = *x * (float)g_win_w / physW;
+            if (physH > 0.f) *y = *y * (float)g_win_h / physH;
+        }
+        if (!logged && physW > 100.f && physH > 100.f)
+        {
+            logged = true;
+            LOGI("[OV] 触摸物理分辨率 ≈ %.0fx%.0f -> surface %dx%d",
+                 physW, physH, g_win_w, g_win_h);
+        }
+    }
+
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
     {
         int w = 0, h = 0;
@@ -220,6 +243,7 @@ namespace
 
         ImGui_ImplOpenGL3_Init("#version 300 es");
         My_ImGui_ImplAndroid_Init(nullptr);
+        My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);   // 触摸坐标 -> surface 坐标系
 
         // 复用当前 GL context 做纹理加载（不创建自己的 EGL context）
         ::graphics = std::make_unique<OpenGLGraphics>();
