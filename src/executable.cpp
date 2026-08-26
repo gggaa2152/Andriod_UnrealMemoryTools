@@ -35,6 +35,7 @@
 #include "UE/UEGameProfiles/Valorant.hpp"
 
 #include "Android_draw/draw.h"
+#include "Android_draw/draw_overlay.h"
 #include "Android_Graphics/GraphicsManager.h"
 
 std::vector<IGameProfile *> UE_Games = {
@@ -1750,6 +1751,30 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
 }
 
 
+// ============ 后台无界面自动探针 + Dump（overlay 首次渲染后也会自动触发） ============
+void RunAutoProbeDump()
+{
+    if (!gCandidates.empty())
+    {
+        LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
+        ExecuteProbe(gCandidates[0]);
+        LOGI("自动开始转储 UE SDK 到 /sdcard/UnrealMemoryTools/ ...");
+        ExecuteDump(gCandidates[0]);
+        LOGI("UE SDK 转储完成！请在 /sdcard/UnrealMemoryTools/ 查看导出的 SDK 文件。");
+    }
+    else
+    {
+        LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
+        AutoProcessCandidate selfCand;
+        selfCand.pid = getpid();
+        selfCand.package = "com.tencent.tmgp.pubgmhd";
+        selfCand.profileName = "AutoFix";
+        selfCand.dedicated = false;
+        ExecuteProbe(selfCand);
+        ExecuteDump(selfCand);
+    }
+}
+
 int ExecutableMain()
 {
     setbuf(stdout, nullptr);
@@ -1813,7 +1838,7 @@ int ExecutableMain()
         }
         else
         {
-            LOGE("[UI] Render 初始化失败，销毁窗口并转入后台无界面模式。");
+            LOGE("[UI] Render 初始化失败，销毁窗口。");
             if (::window)
             {
                 android::ANativeWindowCreator::Destroy(::window);
@@ -1822,27 +1847,19 @@ int ExecutableMain()
         }
     }
 
-    // ============ 阶段2: 后台无界面自动探针 + Dump ============
+    // ============ 阶段2: 尝试 EGL overlay（游戏画面内叠加菜单，绕过悬浮窗权限） ============
+    LOGI("[OV] 尝试安装 EGL overlay (hook eglSwapBuffers，菜单绘制在游戏画面上)...");
+    if (OverlayUI::Install())
+    {
+        LOGI("[OV] 菜单将叠加在游戏画面渲染线程上。自动探针将在首次渲染后触发。");
+        // overlay 由游戏渲染线程回调驱动，本线程保持存活
+        for (;;)
+            std::this_thread::sleep_for(std::chrono::seconds(30));
+    }
+
+    // ============ 阶段3: 后台无界面自动探针 + Dump ============
     LOGW("[BKG] 后台无界面模式: 自动执行 UE 探针与 SDK Dump...");
-    if (!gCandidates.empty())
-    {
-        LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
-        ExecuteProbe(gCandidates[0]);
-        LOGI("自动开始转储 UE SDK 到 /sdcard/UnrealMemoryTools/ ...");
-        ExecuteDump(gCandidates[0]);
-        LOGI("UE SDK 转储完成！请在 /sdcard/UnrealMemoryTools/ 查看导出的 SDK 文件。");
-    }
-    else
-    {
-        LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
-        AutoProcessCandidate selfCand;
-        selfCand.pid = getpid();
-        selfCand.package = "com.tencent.tmgp.pubgmhd";
-        selfCand.profileName = "AutoFix";
-        selfCand.dedicated = false;
-        ExecuteProbe(selfCand);
-        ExecuteDump(selfCand);
-    }
+    RunAutoProbeDump();
 
     Logger::SetSink(nullptr);
     return 0;
