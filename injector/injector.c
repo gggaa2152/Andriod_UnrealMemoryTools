@@ -9,10 +9,12 @@
 //    5. 恢复寄存器并 DETACH
 //
 //  用法:
-//    injector -n <包名> -l /data/local/tmp/libUnrealMemoryTools.so
-//    injector -p <pid>   -l /data/local/tmp/libUnrealMemoryTools.so
+//    injector -n <包名> -l /data/1/libUnrealMemoryTools.so
+//    injector -p <pid>  -l /data/1/libUnrealMemoryTools.so
+//    injector            (自动扫描并注入第一个虚幻游戏进程)
 //
 //  需要 root（ptrace attach 非子进程）。
+//  默认加载路径: /data/1/libUnrealMemoryTools.so
 // ============================================================================
 
 #define _GNU_SOURCE
@@ -144,6 +146,89 @@ static pid_t find_pid_by_pkg(const char *pkg)
     }
     closedir(d);
     return -1;
+}
+
+/* ---------- 自动识别虚幻游戏进程 ---------- */
+
+// 检测进程 maps 中是否加载了 libUE4.so / libUnreal.so
+static int has_unreal_lib(pid_t pid)
+{
+    char maps[256];
+    snprintf(maps, sizeof(maps), "/proc/%d/maps", pid);
+    FILE *f = fopen(maps, "r");
+    if (!f)
+        return 0;
+
+    char line[512];
+    int found = 0;
+    while (fgets(line, sizeof(line), f))
+    {
+        if (strstr(line, "libUE4.so") || strstr(line, "libUnreal.so"))
+        {
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+// 读取进程包名（/proc/pid/cmdline 第一段）
+static int get_proc_pkg(pid_t pid, char *out, size_t outsz)
+{
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "/proc/%d/cmdline", pid);
+    FILE *f = fopen(cmd, "r");
+    if (!f)
+        return -1;
+
+    char line[256] = {0};
+    if (!fgets(line, sizeof(line), f))
+    {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    size_t len = strcspn(line, "\0"); // cmdline 以 \0 分隔
+    if (len == 0)
+        return -1;
+    if (len >= outsz)
+        len = outsz - 1;
+    memcpy(out, line, len);
+    out[len] = 0;
+    return 0;
+}
+
+// 自动扫描所有进程，收集加载了 UE 动态库的候选，返回数量（最多 maxn）
+static int find_ue_candidates(pid_t *pids, char (*pkgs)[256], int maxn)
+{
+    DIR *d = opendir("/proc");
+    if (!d)
+        return 0;
+
+    struct dirent *e;
+    int n = 0;
+    while ((e = readdir(d)) != NULL && n < maxn)
+    {
+        if (e->d_type != DT_DIR)
+            continue;
+        pid_t pid = (pid_t)atoi(e->d_name);
+        if (pid <= 1)
+            continue;
+        if (!has_unreal_lib(pid))
+            continue;
+
+        char pkg[256] = {0};
+        if (get_proc_pkg(pid, pkg, sizeof(pkg)) != 0 || pkg[0] == 0)
+            snprintf(pkg, sizeof(pkg), "pid-%d", pid);
+
+        pids[n] = pid;
+        memcpy(pkgs[n], pkg, strlen(pkg) + 1);
+        n++;
+    }
+    closedir(d);
+    return n;
 }
 
 /* ---------- 解析目标进程 linker64，定位导出符号 ---------- */
@@ -327,11 +412,15 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "用法:\n"
-            "  %s -n <包名> -l <so路径>\n"
-            "  %s -p <pid>  -l <so路径>\n"
+            "  %s                      (自动扫描并注入第一个虚幻游戏进程)\n"
+            "  %s -n <包名>            (按包名注入)\n"
+            "  %s -p <pid>             (按 pid 注入)\n"
+            "  -l <so路径>             (可选, 默认 /data/1/libUnrealMemoryTools.so)\n"
             "示例:\n"
-            "  %s -n com.tencent.tmgp.pubgm -l /data/local/tmp/libUnrealMemoryTools.so\n",
-            prog, prog, prog);
+            "  %s\n"
+            "  %s -n com.tencent.tmgp.pubgm\n"
+            "  %s -l /data/1/libUnrealMemoryTools.so\n",
+            prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char **argv)
@@ -356,10 +445,7 @@ int main(int argc, char **argv)
     }
 
     if (!so)
-    {
-        usage(argv[0]);
-        return 1;
-    }
+        so = "/data/1/libUnrealMemoryTools.so";
 
     if (pkg && pid < 0)
     {
@@ -372,10 +458,22 @@ int main(int argc, char **argv)
         fprintf(stderr, "[injector] 包名 %s -> pid %d\n", pkg, pid);
     }
 
+    // 未指定包名 / pid：自动扫描并识别虚幻游戏进程
     if (pid < 0)
     {
-        fprintf(stderr, "[injector] 未指定有效 pid\n");
-        return 1;
+        pid_t cands[32];
+        char cpkgs[32][256];
+        int nc = find_ue_candidates(cands, cpkgs, 32);
+        if (nc == 0)
+        {
+            fprintf(stderr, "[injector] 未找到任何加载 libUE4.so/libUnreal.so 的进程\n");
+            return 1;
+        }
+        fprintf(stderr, "[injector] 发现 %d 个虚幻游戏进程:\n", nc);
+        for (int i = 0; i < nc; i++)
+            fprintf(stderr, "  [%d] pid=%d pkg=%s\n", i, cands[i], cpkgs[i]);
+        pid = cands[0];
+        fprintf(stderr, "[injector] 自动选择注入: pid=%d pkg=%s\n", pid, cpkgs[0]);
     }
 
     uintptr_t dl = get_dlopen_addr(pid);
