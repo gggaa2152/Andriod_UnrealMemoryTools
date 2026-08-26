@@ -207,7 +207,7 @@ namespace
     static float g_physLong = 3392.0f;
     static float g_physShort = 2400.0f;
     static int g_touchLogCount = 0;
-    static int g_touchMode = 1; // 1: 顺时针横屏90° (充电口向右)  2: 逆时针横屏270° (充电口向左)  0: 1:1直通
+    static int g_touchMode = 0; // 默认 0: 1:1直通(Android原生自带旋转)  1: 顺时针横屏90°  2: 逆时针横屏270°
 
     void OverlayInputTransform(float *x, float *y)
     {
