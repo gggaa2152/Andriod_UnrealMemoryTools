@@ -777,7 +777,9 @@ std::string IGameProfile::GetNameByID(int32_t id) const
 ElfScanner IGameProfile::GetUnrealELF() const
 {
     static const std::vector<std::string> cUELibNames = {"libUE4.so",
-                                                         "libUnreal.so"};
+                                                         "libUnreal.so",
+                                                         "libShadowTrackerExtra.so",
+                                                         "libclient.so"};
 
     ElfScanner ue_elf{};
     for (const auto &lib : cUELibNames)

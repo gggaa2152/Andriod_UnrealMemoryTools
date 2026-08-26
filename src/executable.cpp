@@ -1774,19 +1774,26 @@ int ExecutableMain()
     ::abs_ScreenY = (::displayInfo.height < ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
 
     ::window = android::ANativeWindowCreator::Create("UnrealMemoryTools", native_window_screen_x, native_window_screen_y, permeate_record);
-    if (!::window)
+    if (!::window || !graphics->Init_Render(::window, native_window_screen_x, native_window_screen_y))
     {
-        LOGE("创建 ANativeWindow 失败。");
-        Logger::SetSink(nullptr);
-        return 1;
-    }
+        LOGW("无法初始化独立 Overlay 窗口 (App 沙箱限制)，自动转入后台无界面 UE 探针与自动转储模式...");
+        if (::window)
+        {
+            android::ANativeWindowCreator::Destroy(::window);
+            ::window = nullptr;
+        }
 
-    if (!graphics->Init_Render(::window, native_window_screen_x, native_window_screen_y))
-    {
-        LOGE("初始化图形渲染失败。");
-        android::ANativeWindowCreator::Destroy(::window);
+        // 自动探测当前进程并进行 SDK Dump
+        if (!gCandidates.empty())
+        {
+            LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
+            ExecuteProbe(gCandidates[0]);
+            LOGI("自动开始转储 UE SDK 到 /data/1/Dump/ ...");
+            ExecuteDump(gCandidates[0]);
+            LOGI("UE SDK 转储完成！请在 /data/1/ 或 /sdcard/ 查看转储文件。");
+        }
         Logger::SetSink(nullptr);
-        return 1;
+        return 0;
     }
 
     Touch::Init({(float)::abs_ScreenX, (float)::abs_ScreenY}, false);

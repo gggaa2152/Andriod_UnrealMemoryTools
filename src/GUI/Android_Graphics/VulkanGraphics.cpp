@@ -6,23 +6,11 @@
 #include <android/native_window.h>
 #include <unistd.h>
 
-#ifndef NDEBUG
-
 static void check_vk_result(VkResult err) {
     if (err == 0)
         return;
     fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
-    if (err < 0)
-        abort();
 }
-
-#else
-
-static void check_vk_result(VkResult err) {
-
-}
-
-#endif
 
 VkPhysicalDevice VulkanGraphics::SetupVulkan_SelectPhysicalDevice() {
     uint32_t gpu_count;
@@ -54,7 +42,7 @@ VkPhysicalDevice VulkanGraphics::SetupVulkan_SelectPhysicalDevice() {
 bool VulkanGraphics::Create() {
     if (InitVulkan() != 1) {
         fprintf(stderr, "Vulkan is not supported %s\n", dlerror());
-        abort();
+        return false;
     }
 
     wd = std::make_unique<ImGui_ImplVulkanH_Window>();
