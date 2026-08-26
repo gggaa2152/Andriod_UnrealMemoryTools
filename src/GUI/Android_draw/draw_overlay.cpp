@@ -303,12 +303,10 @@ namespace
             // 触摸转发给 ImGui（菜单可交互）
             My_ImGui_ImplAndroid_HandleInputEvent(*outEvent);
 
-            // 借鉴金铲铲参考实现：ImGui 需要鼠标（点在/拖在菜单内）时
-            // 吞掉事件不透传给游戏，避免菜单操作与游戏冲突；菜单外正常透传。
-            // 只在菜单命中时截断，输入流大部分保持完整，TP 不易察觉。
-            ImGuiIO &io = ImGui::GetIO();
-            if (io.WantCaptureMouse)
-                *outEvent = nullptr;
+            // 注意：不能像金铲铲(Unity)那样用 WantCaptureMouse 置空事件截断——
+            // UE4 对 null 事件不健壮，会把 null 传给 AInputQueue_finishEvent，
+            // libandroid.so 内部解引用空指针直接 SEGV (fault=0x0)（实测 m-capture 崩溃）。
+            // 因此只转发、绝不吞事件；游戏照常收到触摸（点菜单时游戏也响应，可接受）。
         }
         return ret;
     }
