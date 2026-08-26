@@ -1868,7 +1868,12 @@ int ExecutableMain()
             LOGI("[UI] 阶段3: Render/ImGui 初始化成功，进入渲染循环...");
             Touch::Init({(float)::abs_ScreenX, (float)::abs_ScreenY}, false);
             Touch::setOrientation(displayInfo.orientation);
-            ::init_My_drawdata();
+
+            float minDim = (float)(::abs_ScreenY > 0 ? ::abs_ScreenY : 1080);
+            float dpiScale = minDim / 1080.0f;
+            if (dpiScale < 0.85f) dpiScale = 0.85f;
+            if (dpiScale > 2.2f)  dpiScale = 2.2f;
+            ::init_My_drawdata(dpiScale);
 
             bool flag = true;
             while (flag)

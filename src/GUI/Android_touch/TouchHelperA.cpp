@@ -63,6 +63,7 @@ namespace Touch {
         if (!ctx) {
             return false;
         }
+        constexpr float kTouchSlop = 16.0f; // 边缘容差，确保标题栏和边界按钮精准触控
         for (int n = ctx->Windows.Size - 1; n >= 0; --n) {
             ImGuiWindow* window = ctx->Windows[n];
             if (!window || !window->WasActive || window->Hidden) {
@@ -71,7 +72,8 @@ namespace Touch {
             if ((window->Flags & ImGuiWindowFlags_NoInputs) != 0) {
                 continue;
             }
-            const ImRect rect(window->OuterRectClipped.Min, window->OuterRectClipped.Max);
+            ImRect rect(window->OuterRectClipped.Min, window->OuterRectClipped.Max);
+            rect.Expand(kTouchSlop);
             if (rect.Contains(pos)) {
                 return true;
             }
@@ -298,35 +300,25 @@ namespace Touch {
                     if (imguiReady) {
                         ImGuiIO &io = ImGui::GetIO();
 
-                        // Always keep io.MousePos in sync. Ownership is
-                        // decided from the current touch position instead of
-                        // waiting for stale WantCaptureMouse to refresh.
                         if (nowDown) {
                             auto pos = Touch2Screen(device.Finger[latest].pos);
                             const ImVec2 mousePos(pos.x, pos.y);
+                            io.AddMousePosEvent(pos.x, pos.y);
                             io.MousePos = mousePos;
                             pointInsideImGui = IsPointInsideImGuiWindow(mousePos);
                         }
                     }
 
                     // Sequence ownership decision.
-                    // Use the current touch position against visible ImGui
-                    // windows so touches outside the menu go to the system
-                    // immediately.
                     if (owner && *owner == TouchOwner::None && nowDown) {
                         *owner = pointInsideImGui ? TouchOwner::ImGui : TouchOwner::System;
                     }
 
-                    // io.MouseDown must mirror the ownership and current
-                    // press state. Forcing it to false whenever the finger
-                    // is owned by the system (or undecided / released)
-                    // prevents ImGui from getting "stuck" with MouseDown=
-                    // true after a press that ended up going to the system
-                    // — which was the second half of the visible bug
-                    // (UI becoming unclickable after one system tap).
                     if (imguiReady) {
-                        ImGui::GetIO().MouseDown[0] =
-                            (owner && *owner == TouchOwner::ImGui && nowDown);
+                        const bool isUiDown = (owner && *owner == TouchOwner::ImGui && nowDown);
+                        ImGuiIO &io = ImGui::GetIO();
+                        io.AddMouseButtonEvent(0, isUiDown);
+                        io.MouseDown[0] = isUiDown;
                     }
 
                     // Forward to the uinput virtual device only when the
@@ -466,11 +458,11 @@ namespace Touch {
         if (devices.empty()) {
             puts("获取屏幕驱动失败");
             return false;
-        }
-        //LOGD("device count: %zu", devices.size());
-
-        int screenX = devices[0].absX.maximum;
+        }        int screenX = devices[0].absX.maximum;
         int screenY = devices[0].absY.maximum;
+        if (screenX > screenY) {
+            otherTouch = true;
+        }
 
         if (!readOnly) {
             struct uinput_user_dev ui_dev;
@@ -569,7 +561,6 @@ namespace Touch {
         touch_scale.x = (float) screenX / size.x;
         touch_scale.y = (float) screenY / size.y;
 
-        //system("chmod 000 -R /proc/bus/input/*");
         return true;
     }
 
@@ -633,20 +624,20 @@ namespace Touch {
         if (otherTouch) {
             switch (orientation) {
                 case 1:
-                    x = xt;
-                    y = yt;
+                    x = yt;
+                    y = screenSize.x - xt;
                     break;
                 case 2:
-                    y = yt;
-                    x = screenSize.y - xt;
+                    x = screenSize.x - xt;
+                    y = screenSize.y - yt;
                     break;
                 case 3:
-                    x = screenSize.y - xt;
-                    y = screenSize.x - yt;
+                    x = screenSize.y - yt;
+                    y = xt;
                     break;
                 default:
-                    y = xt;
-                    x = screenSize.y - yt;
+                    x = xt;
+                    y = yt;
                     break;
             }
         } else {
@@ -660,8 +651,8 @@ namespace Touch {
                     y = screenSize.x - yt;
                     break;
                 case 3:
-                    y = xt;
                     x = screenSize.x - yt;
+                    y = xt;
                     break;
                 default:
                     x = xt;

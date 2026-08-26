@@ -12,6 +12,6 @@ namespace ImGui {
 
     const ImWchar *GetGlyphRangesChineseSimplifiedOfficial();
 
-    IMGUI_API bool              My_Android_LoadSystemFont(float SizePixels);
+    IMGUI_API ImFont*           My_Android_LoadSystemFont(float SizePixels);
     IMGUI_API ImFont*           My_AddFontFromFileTTF(const char* filename, float size_pixels, const ImFontConfig* font_cfg = NULL, const ImWchar* glyph_ranges = NULL);
 } 

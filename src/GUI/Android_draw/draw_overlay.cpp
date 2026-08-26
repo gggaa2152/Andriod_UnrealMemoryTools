@@ -199,34 +199,9 @@ namespace
     }
 
     // ================= overlay 渲染 =================
-    // 坐标模型：ImGui 逻辑系 = 渲染 surface 尺寸（1520x1080，等比不拉伸），
-    // 触摸从物理系（2400x2400）经"等比缩放 + 居中"映射到 surface 系，避免非等比模糊与右侧错位。
-    float g_physW = 2400.f, g_physH = 2400.f;   // 物理屏尺寸（触摸学习收敛）
-
-    void OverlayInputTransform(float *x, float *y)
-    {
-        static bool logged = false;
-        // 仅学习物理分辨率，不修改坐标
-        if (*x > g_physW) g_physW = *x;
-        if (*y > g_physH) g_physH = *y;
-        if (!logged && g_physW > 100.f && g_physH > 100.f && *x > 100.f && *y > 100.f)
-        {
-            logged = true;
-            LOGI("[OV] 触摸物理分辨率 ≈ %.0fx%.0f -> surface %dx%d (等比缩放)",
-                 g_physW, g_physH, g_win_w, g_win_h);
-        }
-        // 等比映射到 surface（letterbox 模型）：
-        // 游戏 surface(1520x1080) 显示到方屏(2400x2400) 时按宽贴合等比放大，
-        // 水平满宽、垂直居中留黑边 → scale = win_w/physW，y 减去黑边偏移。
-        if (g_win_w > 0 && g_win_h > 0 && g_physW > 0.f && g_physH > 0.f)
-        {
-            const float scale = g_win_w / g_physW;
-            *x = *x * scale;
-            const float physScaledH = g_physH * scale;
-            const float offY = (g_win_h - physScaledH) * 0.5f;   // 负值：上下黑边在触摸系内
-            *y = *y * scale + offY;
-        }
-    }
+    // 坐标模型：AMotionEvent_getX / getY 经由 AInputQueue 分发给游戏窗口时，
+    // 坐标已经是游戏 Surface 本地像素坐标系 (0..g_win_w, 0..g_win_h)，
+    // 直接与 ImGui DisplaySize 1:1 精确对应，无需任何额外的 letterbox 缩放或偏移。
 
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
     {
@@ -243,7 +218,7 @@ namespace
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
-        // 逻辑系 = 渲染 surface 尺寸（等比不拉伸，字体清晰，右侧 hit-test 不偏移）
+        // 逻辑系 = 渲染 surface 尺寸（等比不拉伸，字体清晰，点位精准）
         io.DisplaySize = ImVec2((float)g_win_w, (float)g_win_h);
         io.DisplayFramebufferScale = ImVec2(1.f, 1.f);
         io.IniFilename = nullptr;
@@ -251,14 +226,20 @@ namespace
 
         ImGui_ImplOpenGL3_Init("#version 300 es");
         My_ImGui_ImplAndroid_Init(nullptr);
-        My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);   // 触摸 -> surface 坐标
+        My_ImGui_ImplAndroid_SetInputTransform(nullptr);   // 坐标 1:1 直接映射，绝不偏移
+
+        // 计算当前 Overlay 分辨率下的 DPI 缩放比例
+        float minDim = (g_win_w < g_win_h) ? (float)g_win_w : (float)g_win_h;
+        float dpiScale = minDim / 1080.0f;
+        if (dpiScale < 0.85f) dpiScale = 0.85f;
+        if (dpiScale > 2.2f)  dpiScale = 2.2f;
 
         // 复用当前 GL context 做纹理加载（不创建自己的 EGL context）
         ::graphics = std::make_unique<OpenGLGraphics>();
-        init_My_drawdata();
+        init_My_drawdata(dpiScale);
 
         g_ready = true;
-        LOGI("[OV] overlay 初始化完成 %dx%d (复用游戏 GL context)", w, h);
+        LOGI("[OV] overlay 初始化完成 %dx%d (scale=%.2f, 复用游戏 GL context)", w, h, dpiScale);
 
         // 自动执行探针 + SDK Dump（后台线程，菜单实时显示进度）
         std::thread(RunAutoProbeDump).detach();

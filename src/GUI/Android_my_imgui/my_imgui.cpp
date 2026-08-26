@@ -996,69 +996,84 @@ namespace ImGui {
     }
 
 
-    bool My_Android_LoadSystemFont(float SizePixels) {
-        char path[64]{0};
-        char *filename = nullptr;
-        const char *fontPath[] = {
-                "/system/fonts", "/system/font", "/data/fonts"
+    ImFont* My_Android_LoadSystemFont(float SizePixels) {
+        char foundPath[256]{0};
+        const char *fontDirs[] = {
+            "/system/fonts",
+            "/system_ext/fonts",
+            "/product/fonts",
+            "/data/fonts",
+            "/apex/com.android.runtime/fonts"
         };
-        for (auto tmp: fontPath) {
-            if (access(tmp, R_OK) == 0) {
-                strcpy(path, tmp);
-                filename = path + strlen(tmp);
-                break;
+        const char *fontNames[] = {
+            "NotoSansCJK-Regular.ttc",
+            "NotoSansSC-Regular.otf",
+            "NotoSansSC-Regular.ttf",
+            "SourceHanSansCN-Regular.otf",
+            "SourceHanSans-Regular.ttc",
+            "MiSans-Regular.ttf",
+            "OPlusSans-Regular.ttf",
+            "HONORSansChinese-Regular.ttf",
+            "VivoFont.ttf",
+            "DroidSansFallback.ttf",
+            "NotoSerifCJK-Regular.ttc",
+            "NotoSans-Regular.ttf",
+            "Roboto-Regular.ttf"
+        };
+
+        for (const auto &dir : fontDirs) {
+            if (access(dir, R_OK) != 0)
+                continue;
+            for (const auto &name : fontNames) {
+                char full[256]{0};
+                snprintf(full, sizeof(full), "%s/%s", dir, name);
+                if (access(full, R_OK) == 0) {
+                    strncpy(foundPath, full, sizeof(foundPath) - 1);
+                    break;
+                }
             }
+            if (foundPath[0] != '\0')
+                break;
         }
-        if (!filename) {
-            return false;
-        }
-        *filename++ = '/';
-        strcpy(filename, "NotoSansCJK-Regular.ttc");
-        if (access(path, R_OK) != 0) {
-            strcpy(filename, "NotoSerifCJK-Regular.ttc");
-            if (access(path, R_OK) != 0) {
-                return false;
+
+        // Fallback: search directory for any TTF/OTF/TTC
+        if (foundPath[0] == '\0') {
+            for (const auto &dir : fontDirs) {
+                DIR *d = opendir(dir);
+                if (!d) continue;
+                struct dirent *ent;
+                while ((ent = readdir(d)) != nullptr) {
+                    const char *ext = strrchr(ent->d_name, '.');
+                    if (ext && (strcasecmp(ext, ".ttf") == 0 || strcasecmp(ext, ".otf") == 0 || strcasecmp(ext, ".ttc") == 0)) {
+                        snprintf(foundPath, sizeof(foundPath), "%s/%s", dir, ent->d_name);
+                        break;
+                    }
+                }
+                closedir(d);
+                if (foundPath[0] != '\0')
+                    break;
             }
         }
 
-        const static char *TextAdded = "\u2122""骼瞄狙盔弩嗯帧瞬掷屏屉霰柯匣";
-        ImGuiIO &io = ImGui::GetIO();
-        
-        static ImVector<ImWchar> ranges;
-        if (ranges.empty()) {
-            ImFontGlyphRangesBuilder builder;
-            constexpr ImWchar Ranges[]{
-                    0x0020, 0x00FF, // Basic Latin
-                    0x0100, 0x024F, // Latin Extended-A + Latin Extended-B
-                    0x0300, 0x03FF, // Combining Diacritical Marks + Greek/Coptic
-                    0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
-                    0x0600, 0x06FF, // Arabic
-                    0x0E00, 0x0E7F, // Thai
-                    0x2DE0, 0x2DFF, // Cyrillic Extended-A
-                    0x2000, 0x206F, // General Punctuation
-                    0x3000, 0x30FF, // CJK Symbols and Punctuations, Hiragana, Katakana
-                    0x31F0, 0x31FF, // Katakana Phonetic Extensions
-                    0xFF00, 0xFFEF, // Half-width characters
-                    //0x4E00, 0x9FAF, // CJK Ideograms
-                    0xA640, 0xA69F, // Cyrillic Extended-B
-                    0x3131, 0x3163, // Korean alphabets
-                    //  0xAC00, 0xD7A3, // Korean characters
-                    0
-            };
-            builder.AddRanges(Ranges);
-            //builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
-            builder.AddRanges(GetGlyphRangesChineseSimplifiedOfficial());
-            builder.AddText(TextAdded);
-            builder.BuildRanges(&ranges);
+        if (foundPath[0] == '\0') {
+            return nullptr;
         }
-        
+
+        ImGuiIO &io = ImGui::GetIO();
         ImFontConfig config;
         config.FontDataOwnedByAtlas = false;
         config.SizePixels = SizePixels;
-        //config.GlyphRanges = ranges.Data;
-        config.OversampleH = 1;
-        SystemFont = My_AddFontFromFileTTF(path, 0, &config, io.Fonts->GetGlyphRangesChineseFull());
-        return SystemFont != NULL;
+        config.OversampleH = 2;
+        config.OversampleV = 2;
+        config.PixelSnapH = true;
+#ifdef IMGUI_ENABLE_FREETYPE
+        config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_LightHinting;
+#endif
+        SystemFont = My_AddFontFromFileTTF(foundPath, SizePixels, &config, io.Fonts->GetGlyphRangesChineseFull());
+        if (SystemFont) {
+            io.FontDefault = SystemFont;
+        }
+        return SystemFont;
     }
 
 

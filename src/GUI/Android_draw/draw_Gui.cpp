@@ -34,34 +34,61 @@ ImFont* icon_font_2 = NULL;
 bool M_Android_LoadFont(float SizePixels) {
     ImGuiIO &io = ImGui::GetIO();
     
-    //ImFontConfig config; //oppo字体部分
-    //config.FontDataOwnedByAtlas = false;
-    //config.SizePixels = SizePixels;
-    //config.OversampleH = 1;
-    //::zh_font = io.Fonts->AddFontFromMemoryTTF((void *)OPPOSans_H, OPPOSans_H_size, 0.0f, &config, io.Fonts->GetGlyphRangesChineseFull());    
-    ////io.Fonts->AddFontDefault(&config);
-
 	static const ImWchar icons_ranges[] = {ICON_MIN_FA, ICON_MAX_FA, 0};
     ImFontConfig icons_config;
     icons_config.MergeMode = true;
     icons_config.PixelSnapH = true;
-    icons_config.OversampleH = 3.0;
-    icons_config.OversampleV = 3.0;		
+    icons_config.OversampleH = 2.0;
+    icons_config.OversampleV = 2.0;		
     icons_config.SizePixels = SizePixels;
-    //icons_config.GlyphOffset.y += 7.0f; // 通过 GlyphOffset 调整单个字形偏移量，向下偏移 size 像素
 	::icon_font_0 = io.Fonts->AddFontFromMemoryCompressedTTF((const void *)&font_awesome_brands_compressed_data, sizeof(font_awesome_brands_compressed_data), 0.0f, &icons_config, icons_ranges);
 	::icon_font_1 = io.Fonts->AddFontFromMemoryCompressedTTF((const void *)&font_awesome_regular_compressed_data, sizeof(font_awesome_regular_compressed_data), 0.0f, &icons_config, icons_ranges);
 	::icon_font_2 = io.Fonts->AddFontFromMemoryCompressedTTF((const void *)&font_awesome_solid_compressed_data, sizeof(font_awesome_solid_compressed_data), 0.0f, &icons_config, icons_ranges);
 
-    io.Fonts->AddFontDefault();
-    return zh_font != nullptr;
+    if (io.Fonts->Fonts.empty()) {
+        io.Fonts->AddFontDefault();
+    }
+    return true;
 }
-void init_My_drawdata() {
-    ImGui::StyleColorsDark(); //白色
-    ImGui::My_Android_LoadSystemFont(18.0f); //(加载系统字体 安卓15完美适配)
-    M_Android_LoadFont(18.0f); //加载字体(还有图标)
-    ImGui::GetStyle().ScaleAllSizes(1.0f);
-    ::Aekun_image = graphics->LoadTextureFromMemory((void *)picture_ZhenAiKun_PNG_H, sizeof(picture_ZhenAiKun_PNG_H));
+
+void init_My_drawdata(float scale) {
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::StyleColorsDark();
+
+    if (scale <= 0.0f) {
+        float minDim = (displayInfo.height > 0 && displayInfo.width > 0)
+                           ? (displayInfo.height < displayInfo.width ? displayInfo.height : displayInfo.width)
+                           : 1080.0f;
+        scale = minDim / 1080.0f;
+        if (scale < 0.85f) scale = 0.85f;
+        if (scale > 2.2f)  scale = 2.2f;
+    }
+
+    float fontSize = 24.0f * scale;
+    if (fontSize < 18.0f) fontSize = 18.0f;
+
+    ImFont *sysFont = ImGui::My_Android_LoadSystemFont(fontSize);
+    if (sysFont) {
+        io.FontDefault = sysFont;
+    }
+    M_Android_LoadFont(fontSize);
+
+    ImGuiStyle &style = ImGui::GetStyle();
+    style.ScaleAllSizes(scale);
+
+    // 针对触屏优化的间距与圆角（增大触控热区，避免误触）
+    style.TouchExtraPadding = ImVec2(4.0f * scale, 4.0f * scale);
+    style.FramePadding = ImVec2(10.0f * scale, 6.0f * scale);
+    style.ItemSpacing = ImVec2(10.0f * scale, 7.0f * scale);
+    style.ScrollbarSize = 24.0f * scale;
+    style.GrabMinSize = 20.0f * scale;
+    style.WindowRounding = 10.0f * scale;
+    style.FrameRounding = 6.0f * scale;
+    style.PopupRounding = 6.0f * scale;
+
+    if (graphics) {
+        ::Aekun_image = graphics->LoadTextureFromMemory((void *)picture_ZhenAiKun_PNG_H, sizeof(picture_ZhenAiKun_PNG_H));
+    }
 }
 
 
@@ -90,19 +117,25 @@ void drawBegin() {
         orientation = displayInfo.orientation;
         Touch::setOrientation((int)displayInfo.orientation);
         if (g_window != NULL) {
-            g_window->Pos.x = 100;
-            g_window->Pos.y = 125;        
+            g_window->Pos.x = 40;
+            g_window->Pos.y = 30;        
         }        
-        //cout << " width:" << displayInfo.width << " height:" << displayInfo.height << " orientation:" << displayInfo.orientation << endl;
     }
 }
 
 
 void Layout_tick_UI(bool *main_thread_flag) {
     {
-        // 适配 surface 1520x1080：菜单宽 1100 留出边距，标题栏+折叠箭头/关闭可见
-        ImGui::SetNextWindowSize(ImVec2(1100.0f, 760.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ImVec2(40.0f, 30.0f), ImGuiCond_FirstUseEver);
+        ImGuiIO &io = ImGui::GetIO();
+        float dispW = (io.DisplaySize.x > 0.0f) ? io.DisplaySize.x : 2400.0f;
+        float dispH = (io.DisplaySize.y > 0.0f) ? io.DisplaySize.y : 1080.0f;
+        float winW = (dispW > dispH) ? std::min(dispW * 0.78f, 1300.0f) : std::min(dispW * 0.94f, 1000.0f);
+        float winH = (dispW > dispH) ? std::min(dispH * 0.88f, 850.0f) : std::min(dispH * 0.80f, 1200.0f);
+        if (winW < 360.0f) winW = dispW - 20.0f;
+        if (winH < 280.0f) winH = dispH - 20.0f;
+
+        ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(30.0f, 25.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowBgAlpha(0.92f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.2f);
@@ -120,3 +153,4 @@ void Layout_tick_UI(bool *main_thread_flag) {
         ImGui::PopStyleVar(2);
     }
 }
+
