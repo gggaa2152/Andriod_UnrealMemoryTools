@@ -1757,66 +1757,28 @@ int ExecutableMain()
     setbuf(stdin, nullptr);
 
     Logger::SetSink(LoggerSink);
+    LOGI("UnrealMemoryTools (Hook 进程内模式): 启动 UE 探针与自动 SDK Dump 工作流...");
     RefreshCandidates();
 
-    ::graphics = GraphicsManager::getGraphicsInterface(GraphicsManager::VULKAN);
-    if (!::graphics)
+    if (!gCandidates.empty())
     {
-        LOGE("创建图形后端失败。");
-        Logger::SetSink(nullptr);
-        return 1;
+        LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
+        ExecuteProbe(gCandidates[0]);
+        LOGI("自动开始转储 UE SDK 到 /data/1/Dump/ ...");
+        ExecuteDump(gCandidates[0]);
+        LOGI("UE SDK 转储完成！请在 /data/1/Dump/ 查看导出的 SDK 文件。");
+    }
+    else
+    {
+        LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
+        AutoProcessCandidate selfCand;
+        selfCand.pid = getpid();
+        selfCand.package = "self";
+        selfCand.cmdline = "self";
+        ExecuteProbe(selfCand);
+        ExecuteDump(selfCand);
     }
 
-    ::screen_config();
-    ::native_window_screen_x = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-    ::native_window_screen_y = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-    ::abs_ScreenX = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-    ::abs_ScreenY = (::displayInfo.height < ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-
-    ::window = android::ANativeWindowCreator::Create("UnrealMemoryTools", native_window_screen_x, native_window_screen_y, permeate_record);
-    if (!::window || !graphics->Init_Render(::window, native_window_screen_x, native_window_screen_y))
-    {
-        LOGW("无法初始化独立 Overlay 窗口 (App 沙箱限制)，自动转入后台无界面 UE 探针与自动转储模式...");
-        if (::window)
-        {
-            android::ANativeWindowCreator::Destroy(::window);
-            ::window = nullptr;
-        }
-
-        // 自动探测当前进程并进行 SDK Dump
-        if (!gCandidates.empty())
-        {
-            LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
-            ExecuteProbe(gCandidates[0]);
-            LOGI("自动开始转储 UE SDK 到 /data/1/Dump/ ...");
-            ExecuteDump(gCandidates[0]);
-            LOGI("UE SDK 转储完成！请在 /data/1/ 或 /sdcard/ 查看转储文件。");
-        }
-        Logger::SetSink(nullptr);
-        return 0;
-    }
-
-    Touch::Init({(float)::abs_ScreenX, (float)::abs_ScreenY}, false);
-    Touch::setOrientation(displayInfo.orientation);
-    ::init_My_drawdata();
-
-    bool flag = true;
-    while (flag)
-    {
-        drawBegin();
-        if (permeate_record == false)
-            android::ANativeWindowCreator::ProcessMirrorDisplay();
-        graphics->NewFrame();
-        Layout_tick_UI(&flag);
-        graphics->EndFrame();
-    }
-
-    if (gWorkerThread.joinable())
-        gWorkerThread.join();
-
-    Touch::Close();
-    graphics->Shutdown();
-    android::ANativeWindowCreator::Destroy(::window);
     Logger::SetSink(nullptr);
     return 0;
 }
