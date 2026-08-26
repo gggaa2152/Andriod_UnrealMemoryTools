@@ -207,58 +207,62 @@ namespace
     static float g_physLong = 3392.0f;
     static float g_physShort = 2400.0f;
     static int g_touchLogCount = 0;
-    static int g_touchMode = 0; // 默认 0: 1:1直通(Android原生自带旋转)  1: 顺时针横屏90°  2: 逆时针横屏270°
+    static int g_touchMode = 0; // 0: 自动等比缩放(系统旋转)  1: 顺时针90°(强制换轴)  2: 逆时针270°(强制换轴)
 
     void OverlayInputTransform(float *x, float *y)
     {
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        // 【核心修复】Android 的 AInputQueue_getEvent 拿到的 AInputEvent (经 AMotionEvent_getX 提取) 
-        // 已经是经过系统 InputDispatcher 处理过、映射到当前 Window / View 的相对坐标。
-        // 它已经包含了屏幕旋转（横竖屏）的修正。
-        // 绝大部分情况下，直接将这个坐标传给 ImGui 即可，不需要再次进行 g_physLong 的等比缩放或 XY 轴互换！
-        
-        // 我们提供一个配置项或者直接直通
-        float rx = *x;
-        float ry = *y;
+        const float rx = *x;
+        const float ry = *y;
+
+        // 动态追踪窗口最大输入坐标范围（通常等于屏幕物理分辨率或逻辑分辨率）
+        // 用户反馈是 3392x2400 的 3K 平板
+        if (rx > g_physShort && rx > g_physLong) g_physLong = rx;
+        else if (rx > g_physShort) g_physShort = rx;
+        if (ry > g_physLong) g_physLong = ry;
+
         float targetX = rx;
         float targetY = ry;
-        const char* modeStr = "绝对直通(不缩放不旋转)";
+        const char* modeStr = "自动等比缩放(依赖系统旋转)";
 
         if (g_touchMode == 1) {
-            // 旧逻辑：顺时针90度 (强制物理比例)
-            modeStr = "横屏90°(强制物理比例)";
-            targetX = ry * ((float)g_win_w / 3392.0f);
-            targetY = rx * ((float)g_win_h / 2400.0f);
+            // 顺时针90度 (强制物理比例 + 换轴)
+            modeStr = "横屏90°(强制换轴缩放)";
+            targetX = ry * ((float)g_win_w / g_physLong);
+            targetY = rx * ((float)g_win_h / g_physShort);
         } else if (g_touchMode == 2) {
-            // 旧逻辑：逆时针270度
-            modeStr = "横屏270°(强制物理比例)";
-            targetX = (3392.0f - ry) * ((float)g_win_w / 3392.0f);
-            targetY = (2400.0f - rx) * ((float)g_win_h / 2400.0f);
-        } else if (g_touchMode == 3) {
-            // 旧逻辑：1:1 等比缩放 (如果窗口分辨率和事件分辨率不一致)
-            modeStr = "直通等比缩放";
-            targetX = rx * ((float)g_win_w / 3392.0f);
-            targetY = ry * ((float)g_win_h / 2400.0f);
+            // 逆时针270度 (强制物理比例 + 换轴 + 翻转)
+            modeStr = "横屏270°(强制换轴反转)";
+            targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
+            targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
         } else {
-            // 默认模式 0：绝对直通。完全信任 Android 系统的坐标映射。
-            targetX = rx;
-            targetY = ry;
+            // 模式 0：自动等比缩放 (AInputQueue 已经处理了屏幕旋转)
+            // AInputEvent 坐标是窗口空间 (例如 3392x2400)
+            // EGL Surface 可能是降分辨率的 (例如 1520x1080)
+            // 所以我们需要把窗口坐标缩放到 EGL 画布坐标
+            if (g_win_w >= g_win_h) {
+                targetX = rx * ((float)g_win_w / g_physLong);
+                targetY = ry * ((float)g_win_h / g_physShort);
+            } else {
+                targetX = rx * ((float)g_win_w / g_physShort);
+                targetY = ry * ((float)g_win_h / g_physLong);
+            }
         }
 
-        // 依然保留合法边界保护，防止因为越界导致 ImGui 异常
+        // 合法边界保护
         if (targetX < 0.0f) targetX = 0.0f;
         if (targetX > (float)g_win_w) targetX = (float)g_win_w;
         if (targetY < 0.0f) targetY = 0.0f;
         if (targetY > (float)g_win_h) targetY = (float)g_win_h;
 
-        // 仅在最开始的 60 次触摸打印日志，方便用户使用 logcat 诊断
+        // 全链路日志（实时输出到 /data/1/unrealmt.log 与 logcat）
         if (g_touchLogCount < 60)
         {
             g_touchLogCount++;
-            LOGI("[CHAIN-TOUCH] #%d [%s] 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) | Surface=%dx%d",
-                 g_touchLogCount, modeStr, rx, ry, targetX, targetY, g_win_w, g_win_h);
+            LOGI("[CHAIN-TOUCH] #%d [%s] 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) | EGL_Surface=%dx%d WindowMax=%.0fx%.0f",
+                 g_touchLogCount, modeStr, rx, ry, targetX, targetY, g_win_w, g_win_h, g_physLong, g_physShort);
         }
 
         *x = targetX;
