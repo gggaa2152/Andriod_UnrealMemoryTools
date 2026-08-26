@@ -12,6 +12,8 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <cstdarg>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -21,8 +23,32 @@
 #include <ucontext.h>
 
 #define LOG_TAG "UnrealMemoryTools"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// 注入模式下游戏进程的 log 被 logd 过滤，logcat 抓不到。
+// 因此所有日志同时追加写入 /data/1/unrealmt.log（目录 777 权限，游戏进程可写）。
+static void UnrealLogToFile(const char *fmt, ...)
+{
+    if (!fmt)
+        return;
+    char buf[4096] = {0};
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    int fd = open("/data/1/unrealmt.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+    if (fd < 0)
+        return;
+    char line[4224] = {0};
+    int n = snprintf(line, sizeof(line), "I: %s\n", buf);
+    if (n > (int)sizeof(line))
+        n = (int)sizeof(line);
+    write(fd, line, (size_t)n);
+    close(fd);
+}
+
+#define LOGI(...) do { __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__); UnrealLogToFile(__VA_ARGS__); } while (0)
+#define LOGE(...) do { __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__); UnrealLogToFile(__VA_ARGS__); } while (0)
 
 // 原主流程（由 executable.cpp 提供）
 extern int ExecutableMain();
@@ -162,7 +188,7 @@ __attribute__((constructor))
 void UnrealMemoryTools_OnLoad()
 {
     InstallCrashHandler();
-    LOGI("UnrealMemoryTools (Hook 模式) 已注入，pid=%d, 构建: 2026-08-26d-safe-readv", getpid());
+    LOGI("UnrealMemoryTools (Hook 模式) 已注入，pid=%d, 构建: 2026-08-26e-filelog", getpid());
 
     static bool started = false;
     if (started)

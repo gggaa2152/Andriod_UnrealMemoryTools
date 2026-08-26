@@ -2,6 +2,8 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifndef kEXECUTABLE
 #include <android/log.h>
@@ -27,6 +29,26 @@ namespace Logger
     {
         if (auto sink = GetSink())
             sink(level, message);
+    }
+
+    // 注入模式下游戏进程的 log 会被 logd 过滤、logcat 抓不到，
+    // 因此所有日志同时追加写入 /data/1/unrealmt.log（目录权限 777，游戏进程可写）。
+    inline void LogToFile(char level, const char *message)
+    {
+        if (!message || !*message)
+            return;
+        int fd = open("/data/1/unrealmt.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (fd < 0)
+            return;
+        char line[4224] = {0};
+        int n = snprintf(line, sizeof(line), "%c: %s\n", level, message);
+        if (n > 0)
+        {
+            if (n > (int)sizeof(line))
+                n = (int)sizeof(line);
+            write(fd, line, (size_t)n);
+        }
+        close(fd);
     }
 
 #ifndef kEXECUTABLE
@@ -60,6 +82,7 @@ namespace Logger
         __android_log_print(ToAndroidPriority(level), LOG_TAG, "%s", buffer);
 #endif
 
+        LogToFile(level, buffer);
         ForwardToSink(level, buffer);
     }
 }  // namespace Logger
