@@ -233,7 +233,8 @@ static int find_ue_candidates(pid_t *pids, char (*pkgs)[256], int maxn)
 
 /* ---------- 解析目标进程 linker64，定位导出符号 ---------- */
 
-static uintptr_t find_linker_base(pid_t pid)
+// 在目标 maps 中按库名（子串）查找第一个匹配模块的基址
+static uintptr_t find_module_base_by_name(pid_t pid, const char *name)
 {
     char maps[256];
     snprintf(maps, sizeof(maps), "/proc/%d/maps", pid);
@@ -245,7 +246,7 @@ static uintptr_t find_linker_base(pid_t pid)
     uintptr_t base = 0;
     while (fgets(line, sizeof(line), f))
     {
-        if (strstr(line, "linker64") != NULL)
+        if (strstr(line, name) != NULL)
         {
             uintptr_t s = 0;
             if (sscanf(line, "%lx-", &s) == 1)
@@ -257,6 +258,11 @@ static uintptr_t find_linker_base(pid_t pid)
     }
     fclose(f);
     return base;
+}
+
+static uintptr_t find_linker_base(pid_t pid)
+{
+    return find_module_base_by_name(pid, "linker64");
 }
 
 // GNU hash（DT_GNU_HASH 使用的变体 djb2）
@@ -312,6 +318,8 @@ static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
         }
     }
 done:
+    fprintf(stderr, "[injector]   dynsym: symtab=0x%lx strtab=0x%lx DT_HASH=%d DT_GNU_HASH=%d\n",
+            symtab, strtab, hashtab != 0, gnuhash != 0);
     if (!symtab || !strtab)
         return 0;
 
@@ -333,7 +341,10 @@ done:
                 if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1))
                     return 0;
                 if (strcmp(sname, name) == 0)
+                {
+                    fprintf(stderr, "[injector]   found(DT_HASH) %s @ 0x%lx\n", name, base + sym.st_value);
                     return base + sym.st_value; // PIE: 符号值需加基地址
+                }
             }
         }
     }
@@ -387,7 +398,10 @@ done:
                 char sname[256] = {0};
                 if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1) == 0 &&
                     strcmp(sname, name) == 0)
+                {
+                    fprintf(stderr, "[injector]   found(GNU) %s @ 0x%lx\n", name, base + sym.st_value);
                     return base + sym.st_value;
+                }
             }
             if (cur & 1)
                 break; // 链尾
@@ -399,19 +413,47 @@ done:
 
 static uintptr_t get_dlopen_addr(pid_t pid)
 {
+    // 1. linker64（dlopen 真实实现通常在这里）
     uintptr_t base = find_linker_base(pid);
-    if (!base)
-        return 0;
-    // 部分 Android 版本导出名是 __dl_dlopen
-    uintptr_t addr = find_symbol_remote(pid, base, "dlopen");
-    if (!addr)
-        addr = find_symbol_remote(pid, base, "__dl_dlopen");
-    return addr;
+    fprintf(stderr, "[injector] linker64 base = 0x%lx\n", base);
+    if (base)
+    {
+        uintptr_t a = find_symbol_remote(pid, base, "dlopen");
+        if (a)
+        {
+            fprintf(stderr, "[injector] dlopen(linker) = 0x%lx\n", a);
+            return a;
+        }
+        a = find_symbol_remote(pid, base, "__dl_dlopen");
+        if (a)
+        {
+            fprintf(stderr, "[injector] __dl_dlopen(linker) = 0x%lx\n", a);
+            return a;
+        }
+    }
+
+    // 2. 回退：部分 ROM 的公开 dlopen 导出在 libdl / libc
+    const char *mods[] = {"libdl.so", "libdl_android.so", "libc.so", NULL};
+    for (int i = 0; mods[i]; i++)
+    {
+        uintptr_t b = find_module_base_by_name(pid, mods[i]);
+        if (!b)
+            continue;
+        fprintf(stderr, "[injector] try %s base = 0x%lx\n", mods[i], b);
+        uintptr_t a = find_symbol_remote(pid, b, "dlopen");
+        if (a)
+        {
+            fprintf(stderr, "[injector] dlopen(%s) = 0x%lx\n", mods[i], a);
+            return a;
+        }
+    }
+
+    return 0;
 }
 
 /* ---------- 执行注入 ---------- */
 
-static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
+static int do_inject(pid_t pid, const char *so_path)
 {
     if (ptrace(PTRACE_ATTACH, pid, 0, 0) == -1)
     {
@@ -421,6 +463,16 @@ static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
 
     int status = 0;
     waitpid(pid, &status, 0);
+
+    // attach 之后跨进程内存读才稳（部分设备未 attach 时 process_vm_readv 被 SELinux 拦截）
+    uintptr_t dlopen_addr = get_dlopen_addr(pid);
+    if (!dlopen_addr)
+    {
+        fprintf(stderr, "[injector] 未能在 linker64 / libdl / libc 中定位 dlopen\n");
+        ptrace(PTRACE_DETACH, pid, 0, 0);
+        return -1;
+    }
+    fprintf(stderr, "[injector] dlopen @ 0x%lx\n", dlopen_addr);
 
     struct user_pt_regs saved, regs;
     if (ptrace_getregs(pid, &saved) == -1)
@@ -552,15 +604,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "[injector] 自动选择注入: pid=%d pkg=%s\n", pid, cpkgs[0]);
     }
 
-    uintptr_t dl = get_dlopen_addr(pid);
-    if (!dl)
-    {
-        fprintf(stderr, "[injector] 未能在 linker64 中定位 dlopen\n");
-        return 1;
-    }
-    fprintf(stderr, "[injector] dlopen @ 0x%lx\n", dl);
-
-    int ret = do_inject(pid, so, dl);
+    int ret = do_inject(pid, so);
     fprintf(stderr, "[injector] %s\n", ret == 0 ? "注入成功" : "注入失败");
     return ret == 0 ? 0 : 1;
 }
