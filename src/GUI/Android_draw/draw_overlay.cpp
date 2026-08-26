@@ -201,17 +201,11 @@ namespace
         return anyHooked;
     }
 
-    // ================= overlay 触摸校准 =================
-    // 根因定位 (由和平精英真实实测 log 彻底确诊):
-    // 1. 游戏 EGL 渲染 Surface 处于横屏 (1520x1080)
-    // 2. AInputQueue 底层分发的 AMotionEvent 坐标仍为物理屏幕原生竖屏系 (rx: 0..1080 短边, ry: 0..2400 长边)
-    // 3. 用户点击横屏菜单上方中间时，rx≈1099, ry≈1362 (ry 远超 EGL 高度 1080)
-    // 4. 旋转映射公式:
-    //    targetX = ry * (EGL_W / PhysLong) = 1362.3 * (1520 / 2400) = 862.5 (横屏菜单中央)
-    //    targetY = (PhysShort - rx) * (EGL_H / PhysShort) = (1080 - 1099) -> 0.0 (菜单顶部标题栏)
+    // ================= overlay 触摸校准与全链路诊断 =================
     static float g_physLong = 2400.0f;
     static float g_physShort = 1080.0f;
     static int g_touchLogCount = 0;
+    static int g_touchMode = 1; // 1: 顺时针横屏90° (主流)  2: 逆时针横屏270°  0: 1:1直通
 
     void OverlayInputTransform(float *x, float *y)
     {
@@ -221,54 +215,64 @@ namespace
         const float rx = *x;
         const float ry = *y;
 
-        // 动态追踪当前设备真实物理长边与短边（自适应 2K/1080P/720P/平板/折叠屏）
+        // 动态追踪最大物理长边与短边（自适应 2K/1080P/720P/折叠屏）
         if (rx > g_physLong) g_physLong = rx;
         if (ry > g_physLong) g_physLong = ry;
 
         float targetX = rx;
         float targetY = ry;
+        const char* modeStr = "1:1直通";
 
         if (g_win_w >= g_win_h)
         {
             // 游戏渲染为横屏 (Landscape: 如 1520x1080 或 2400x1080)
-            if (ry > (float)g_win_h || ry > g_physShort * 0.95f)
+            if (ry > (float)g_win_h || ry > g_physShort * 0.90f)
             {
-                // 情况 A: 触摸事件为原生竖屏物理系 (ry 是长边 0..physLong, rx 是短边 0..physShort)
-                // 横屏 X 对应竖屏 Y (长边)；横屏 Y 对应竖屏 X 倒向 (physShort - rx)
-                targetX = ry * ((float)g_win_w / g_physLong);
-                targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
+                if (g_touchMode == 2) {
+                    // 逆时针横屏 270° (充电口在左侧)
+                    modeStr = "横屏270°(充电口在左)";
+                    targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
+                    targetY = rx * ((float)g_win_h / g_physShort);
+                } else {
+                    // 顺时针横屏 90° (充电口在右侧，最主流方向)
+                    modeStr = "横屏90°(充电口在右)";
+                    targetX = ry * ((float)g_win_w / g_physLong);
+                    targetY = (g_physShort - rx) * ((float)g_win_h / g_physShort);
+                }
             }
             else if (rx > (float)g_win_w)
             {
-                // 情况 B: 触摸事件已在横屏系，但属于 2400 物理屏映射到 1520 降采样 Surface
+                modeStr = "横屏降采样等比缩放";
                 targetX = rx * ((float)g_win_w / g_physLong);
                 targetY = ry * ((float)g_win_h / g_physShort);
             }
             else
             {
-                // 情况 C: 1:1 绝对坐标
+                modeStr = "横屏1:1绝对坐标";
                 targetX = rx;
                 targetY = ry;
             }
         }
         else
         {
-            // 游戏渲染为竖屏
+            // 竖屏游戏
+            modeStr = "竖屏系";
             if (rx > (float)g_win_w) targetX = rx * ((float)g_win_w / g_physShort);
             if (ry > (float)g_win_h) targetY = ry * ((float)g_win_h / g_physLong);
         }
 
-        // 合法边界限制
+        // 合法边界保护
         if (targetX < 0.0f) targetX = 0.0f;
         if (targetX > (float)g_win_w) targetX = (float)g_win_w;
         if (targetY < 0.0f) targetY = 0.0f;
         if (targetY > (float)g_win_h) targetY = (float)g_win_h;
 
-        if (g_touchLogCount < 25)
+        // 全链路日志（实时输出到 /data/1/unrealmt.log 与 logcat）
+        if (g_touchLogCount < 60)
         {
             g_touchLogCount++;
-            LOGI("[OV-TOUCH] #%d 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) Surface=%dx%d",
-                 g_touchLogCount, rx, ry, targetX, targetY, g_win_w, g_win_h);
+            LOGI("[CHAIN-TOUCH] #%d [%s] 原始=(%.1f, %.1f) -> 映射ImGui=(%.1f, %.1f) | Surface=%dx%d Phys=%.0fx%.0f",
+                 g_touchLogCount, modeStr, rx, ry, targetX, targetY, g_win_w, g_win_h, g_physLong, g_physShort);
         }
 
         *x = targetX;
@@ -292,7 +296,7 @@ namespace
         g_physLong = (w > 2400 ? (float)w : 2400.0f);
         g_physShort = (h > 1080 ? (float)h : 1080.0f);
 
-        LOGI("[OV] EGL Surface=%dx%d, 物理屏幕基准=%.0fx%.0f (支持原生竖屏触控转横屏渲染+等比缩放)",
+        LOGI("[OV] EGL Surface=%dx%d, 物理屏幕基准=%.0fx%.0f (全链路触控自适应+屏幕光标可视化就绪)",
              g_win_w, g_win_h, g_physLong, g_physShort);
 
         ImGui::CreateContext();
@@ -341,6 +345,24 @@ namespace
         ImGui::NewFrame();
 
         Layout_tick_UI(&g_menu_open);
+
+        // 🎯 屏幕实时触控光标轨迹可视化（在画面最顶层绘制触控点与坐标，直观观察触控落点）
+        if (io.MouseDown[0] || (io.MousePos.x >= 0.0f && io.MousePos.x <= (float)g_win_w && io.MousePos.y >= 0.0f && io.MousePos.y <= (float)g_win_h))
+        {
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            if (fg)
+            {
+                // 绘制高亮准星与触摸光晕
+                fg->AddCircleFilled(io.MousePos, 16.0f, IM_COL32(0, 255, 120, 180));
+                fg->AddCircle(io.MousePos, 22.0f, IM_COL32(255, 255, 255, 240), 0, 2.5f);
+                fg->AddLine(ImVec2(io.MousePos.x - 28, io.MousePos.y), ImVec2(io.MousePos.x + 28, io.MousePos.y), IM_COL32(255, 255, 0, 200), 1.5f);
+                fg->AddLine(ImVec2(io.MousePos.x, io.MousePos.y - 28), ImVec2(io.MousePos.x, io.MousePos.y + 28), IM_COL32(255, 255, 0, 200), 1.5f);
+
+                char tip[128];
+                snprintf(tip, sizeof(tip), "Touch: (%.1f, %.1f) Down:%d", io.MousePos.x, io.MousePos.y, io.MouseDown[0]);
+                fg->AddText(ImVec2(io.MousePos.x + 30, io.MousePos.y - 20), IM_COL32(255, 255, 0, 255), tip);
+            }
+        }
 
         ImGui::Render();
         glViewport(0, 0, g_win_w, g_win_h);
