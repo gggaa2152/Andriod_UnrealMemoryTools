@@ -26,6 +26,10 @@ bool KittyMemoryMgr::initialize(pid_t pid, EKittyMemOP eMemOp, bool initMemPatch
     case EK_MEM_OP_IO:
         _pMemOp = std::make_unique<KittyMemIO>();
         break;
+    case EK_MEM_OP_DIRECT:
+        // Hook 注入模式：进程内直接指针读写，无需 root / ptrace 权限
+        _pMemOp = std::make_unique<KittyMemDirect>();
+        break;
     default:
         KITTY_LOGE("KittyMemoryMgr: Unknown memory operation.");
         return false;

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,6 +12,7 @@
 #include <sys/types.h>
 #include <thread>
 #include <unordered_map>
+#include <unistd.h>
 #include <vector>
 
 #include "Utils/Logger.hpp"
@@ -163,55 +165,46 @@ namespace
         return false;
     }
 
+    std::string GetSelfPackageName()
+    {
+        char buf[256] = {0};
+        int fd = ::open("/proc/self/cmdline", O_RDONLY);
+        if (fd < 0)
+            return "self";
+
+        ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+        ::close(fd);
+        if (n <= 0)
+            return "self";
+
+        return std::string(buf);
+    }
+
     std::vector<AutoProcessCandidate> FindAutoProcessCandidates()
     {
-        std::unordered_map<std::string, AutoProcessCandidate> candidates;
+        // ===== Hook 注入模式 =====
+        // 本 .so 已注入到目标游戏进程内部，候选进程永远只有当前进程自身。
+        std::vector<AutoProcessCandidate> result;
+        const std::string package = GetSelfPackageName();
 
+        std::string profileName = "自动识别 (UE4/UE5 通用)";
+        bool dedicated = false;
         for (auto *profile : UE_Games)
         {
             for (const auto &pkg : profile->GetAppIDs())
             {
-                auto pids = KittyMemoryEx::getPIDsOf(pkg);
-                for (pid_t pid : pids)
-                    candidates[pkg] = {pid, pkg, profile->GetAppName(), true};
+                if (package.find(pkg) != std::string::npos)
+                {
+                    profileName = profile->GetAppName();
+                    dedicated = true;
+                    break;
+                }
             }
+            if (dedicated)
+                break;
         }
 
-        DIR *dir = opendir("/proc");
-        if (!dir) return {};
-
-        dirent *entry = nullptr;
-        while ((entry = readdir(dir)) != nullptr)
-        {
-            if (!IsNumericName(entry->d_name))
-                continue;
-
-            pid_t pid = static_cast<pid_t>(atoi(entry->d_name));
-            if (pid <= 0)
-                continue;
-
-            std::string processName = KittyMemoryEx::getProcessName(pid);
-            if (processName.empty() || candidates.count(processName) > 0)
-                continue;
-            if (!HasUnrealLib(pid))
-                continue;
-
-            candidates[processName] = {pid, processName, "自动识别 (UE4/UE5 通用)", false};
-        }
-
-        closedir(dir);
-
-        std::vector<AutoProcessCandidate> result;
-        result.reserve(candidates.size());
-        for (const auto &it : candidates)
-            result.push_back(it.second);
-
-        std::sort(result.begin(), result.end(), [](const AutoProcessCandidate &a, const AutoProcessCandidate &b)
-        {
-            if (a.dedicated != b.dedicated)
-                return a.dedicated > b.dedicated;
-            return a.package < b.package;
-        });
+        result.push_back({static_cast<pid_t>(getpid()), package, profileName, dedicated});
         return result;
     }
 
@@ -651,9 +644,8 @@ namespace
         LOGI("==========================");
 
         SetDumpPhase("初始化内存");
-        LOGI("正在初始化内存...");
-        if (!kMgr.initialize(candidate.pid, EK_MEM_OP_SYSCALL, false) &&
-            !kMgr.initialize(candidate.pid, EK_MEM_OP_IO, false))
+        LOGI("正在初始化内存 (Hook 进程内直读模式)...");
+        if (!kMgr.initialize(candidate.pid, EK_MEM_OP_DIRECT, false))
         {
             LOGE("初始化 KittyMemoryMgr 失败。");
             FinishProbeState(false, {}, {}, "ERROR_INIT_MEMORY");
@@ -1758,7 +1750,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
 }
 
 
-int main()
+int ExecutableMain()
 {
     setbuf(stdout, nullptr);
     setbuf(stderr, nullptr);

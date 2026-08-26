@@ -7,7 +7,8 @@ enum EKittyMemOP
 {
     EK_MEM_OP_NONE = 0,
     EK_MEM_OP_SYSCALL,
-    EK_MEM_OP_IO
+    EK_MEM_OP_IO,
+    EK_MEM_OP_DIRECT  // 进程内直读（Hook 注入模式）
 };
 
 class IKittyMemOp
@@ -44,6 +45,18 @@ class KittyMemIO : public IKittyMemOp
 private:
     std::unique_ptr<KittyIOFile> _pMem;
 
+public:
+    bool init(pid_t pid);
+
+    size_t Read(uintptr_t address, void *buffer, size_t len) const;
+    size_t Write(uintptr_t address, void *buffer, size_t len) const;
+};
+
+// ============ 进程内直读（Hook 注入模式专用） ============
+// 本模式下工具以 .so 注入到目标游戏进程内部，
+// 无需跨进程系统调用，直接对自身地址空间进行读写。
+class KittyMemDirect : public IKittyMemOp
+{
 public:
     bool init(pid_t pid);
 

@@ -1,0 +1,46 @@
+name: Build libUnrealMemoryTools.so (Hook 注入模式)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: NDK Build (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK r25c
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+          add-to-path: false
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build cmake
+
+      - name: Configure (CMake)
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Android
+
+      - name: Build
+        run: cmake --build build -j $(nproc)
+
+      - name: List output
+        run: ls -lh outputs/arm64-v8a/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libUnrealMemoryTools-arm64-v8a
+          path: outputs/arm64-v8a/
+          if-no-files-found: error

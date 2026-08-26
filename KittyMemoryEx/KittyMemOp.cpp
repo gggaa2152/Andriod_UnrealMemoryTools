@@ -1,5 +1,6 @@
 #include "KittyMemOp.hpp"
 #include <cerrno>
+#include <sys/mman.h>
 
 // process_vm_readv & process_vm_writev
 #if defined(__aarch64__)
@@ -254,4 +255,43 @@ size_t KittyMemIO::Write(uintptr_t address, void *buffer, size_t len) const
 
     ssize_t bytes = _pMem->Write(address, buffer, len);
     return bytes > 0 ? bytes : 0;
+}
+
+/* =================== KittyMemDirect (Hook 注入模式) =================== */
+
+bool KittyMemDirect::init(pid_t pid)
+{
+    if (pid < 1)
+    {
+        KITTY_LOGE("KittyMemDirect: Invalid PID.");
+        return false;
+    }
+
+    _pid = pid;
+    return true;
+}
+
+size_t KittyMemDirect::Read(uintptr_t address, void *buffer, size_t len) const
+{
+    if (_pid < 1 || !address || !buffer || !len)
+        return 0;
+
+    memcpy(buffer, reinterpret_cast<const void *>(address), len);
+    return len;
+}
+
+size_t KittyMemDirect::Write(uintptr_t address, void *buffer, size_t len) const
+{
+    if (_pid < 1 || !address || !buffer || !len)
+        return 0;
+
+    const long page_size = sysconf(_SC_PAGESIZE);
+    const uintptr_t page_start = address & ~(uintptr_t)(page_size - 1);
+    const size_t span =
+        ((address - page_start) + len + page_size - 1) & ~(size_t)(page_size - 1);
+
+    // 目标页可能为只读（如 .text / .rodata），临时解除写保护
+    mprotect(reinterpret_cast<void *>(page_start), span, PROT_READ | PROT_WRITE | PROT_EXEC);
+    memcpy(reinterpret_cast<void *>(address), buffer, len);
+    return len;
 }
