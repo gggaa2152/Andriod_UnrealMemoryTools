@@ -1773,8 +1773,9 @@ int ExecutableMain()
         LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
         AutoProcessCandidate selfCand;
         selfCand.pid = getpid();
-        selfCand.package = "self";
-        selfCand.cmdline = "self";
+        selfCand.package = "com.tencent.tmgp.pubgmhd";
+        selfCand.profileName = "AutoFix";
+        selfCand.dedicated = false;
         ExecuteProbe(selfCand);
         ExecuteDump(selfCand);
     }
