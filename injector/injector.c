@@ -274,6 +274,47 @@ static uint32_t gnu_hash(const char *s)
     return h;
 }
 
+// 从 GNU hash 表精确计算 dynsym 总数：
+//   nsyms = max(buckets[]) 后再沿 chain 走到链尾（LSB 置位）。
+// 仅用于确定线性扫描上界，避免依赖易错的 bloom 过滤。
+static uint32_t gnu_nsyms(pid_t pid, uintptr_t gnuhash)
+{
+    uint32_t hdr[4] = {0};
+    if (remote_read(pid, gnuhash, hdr, 16))
+        return 0;
+    uint32_t nbuckets   = hdr[0];
+    uint32_t symoffset  = hdr[1];
+    uint32_t bloom_size = hdr[2];
+    if (bloom_size == 0 || nbuckets == 0)
+        return 0;
+
+    uintptr_t buckets_va = gnuhash + 16 + (uintptr_t)bloom_size * 8;
+    uint32_t nsyms = symoffset;
+    for (uint32_t i = 0; i < nbuckets; i++)
+    {
+        uint32_t b = 0;
+        if (remote_read(pid, buckets_va + (uintptr_t)i * 4, &b, 4))
+            return 0;
+        if (b > nsyms)
+            nsyms = b;
+    }
+    if (nsyms < symoffset)
+        return 0;
+
+    uintptr_t chain_va = buckets_va + (uintptr_t)nbuckets * 4;
+    uint32_t idx = nsyms;
+    for (uint32_t step = 0; step < 4000000; step++)
+    {
+        uint32_t c = 0;
+        if (remote_read(pid, chain_va + (uintptr_t)(idx - symoffset) * 4, &c, 4))
+            return 0;
+        if (c & 1)
+            return idx + 1; // 链尾，idx 是最后一个符号
+        idx++;
+    }
+    return 0;
+}
+
 // 在远程进程的 dynsym 中按名查找符号，支持 DT_HASH 与 DT_GNU_HASH 两套哈希表
 static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
 {
@@ -337,132 +378,102 @@ done:
     if (!symtab || !strtab)
         return 0;
 
-    // ---- 经典 DT_HASH ----
+    // 计算 dynsym 数量（线性扫描上界）：
+    //   1) DT_HASH.nchain（最准确）
+    //   2) GNU hash 推断（bucket 最大值 + 沿 chain 走到链尾）
+    //   3) 回退：包含 symtab 的 PT_LOAD 段末尾估算
+    uint32_t nsyms = 0;
     if (hashtab)
     {
         uint32_t h[2] = {0};
         if (remote_read(pid, hashtab, h, 8) == 0)
+            nsyms = h[1]; // nchain == 符号数
+    }
+    if (nsyms == 0 && gnuhash)
+        nsyms = gnu_nsyms(pid, gnuhash);
+    if (nsyms == 0)
+    {
+        for (int i = 0; i < eh.e_phnum; i++)
         {
-            uint32_t nsyms = h[1]; // nchain = 符号数
-            for (uint32_t i = 0; i < nsyms; i++)
+            if (ph[i].p_type == PT_LOAD)
             {
-                Elf64_Sym sym;
-                if (remote_read(pid, symtab + (uintptr_t)i * sizeof(Elf64_Sym), &sym, sizeof(sym)))
-                    return 0;
-                if (sym.st_name == 0)
-                    continue;
-                char sname[256] = {0};
-                if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1))
-                    return 0;
-                if (strcmp(sname, name) == 0)
+                uintptr_t va  = load_bias + ph[i].p_vaddr;
+                uintptr_t end = va + ph[i].p_filesz;
+                if (symtab >= va && symtab < end)
                 {
-                    fprintf(stderr, "[injector]   found(DT_HASH) %s @ 0x%lx\n", name, base + sym.st_value);
-                    return base + sym.st_value; // PIE: 符号值需加基地址
+                    nsyms = (uint32_t)((end - symtab) / sizeof(Elf64_Sym));
+                    break;
                 }
             }
         }
     }
+    fprintf(stderr, "[injector]   nsyms = %u\n", nsyms);
+    if (nsyms == 0)
+        return 0;
 
-    // ---- 回退 DT_GNU_HASH（现代 Android linker 用它） ----
-    if (gnuhash)
+    // 线性扫描全部 dynsym（不依赖 bloom/chain，最稳健）
+    for (uint32_t i = 0; i < nsyms; i++)
     {
-        uint32_t hdr[4] = {0};
-        if (remote_read(pid, gnuhash, hdr, 16))
+        Elf64_Sym sym;
+        if (remote_read(pid, symtab + (uintptr_t)i * sizeof(Elf64_Sym), &sym, sizeof(sym)))
             return 0;
-        uint32_t nbuckets   = hdr[0];
-        uint32_t symoffset  = hdr[1];
-        uint32_t bloom_size = hdr[2];
-        uint32_t bloom_shift = hdr[3];
-        if (bloom_size == 0 || nbuckets == 0)
+        if (sym.st_name == 0 || sym.st_shndx == 0) // 跳过空名 / 未定义符号
+            continue;
+        char sname[256] = {0};
+        if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1))
             return 0;
-
-        uintptr_t bloom_va   = gnuhash + 16;
-        uintptr_t buckets_va = bloom_va + (uintptr_t)bloom_size * 8;
-        uintptr_t chain_va   = buckets_va + (uintptr_t)nbuckets * 4;
-
-        uint32_t h = gnu_hash(name);
-
-        // bloom 过滤（64 位字）
-        uint32_t word_idx = (h / 64) & (bloom_size - 1);
-        uint64_t bloom_word = 0;
-        if (remote_read(pid, bloom_va + (uintptr_t)word_idx * 8, &bloom_word, 8))
-            return 0;
-        uint32_t bit1 = h & 63;
-        uint32_t bit2 = (h >> bloom_shift) & 63;
-        if (((bloom_word >> bit1) & 1) == 0 || ((bloom_word >> bit2) & 1) == 0)
-            return 0; // bloom 判定不存在，跳过
-
-        uint32_t bucket = h % nbuckets;
-        uint32_t symidx = 0;
-        if (remote_read(pid, buckets_va + (uintptr_t)bucket * 4, &symidx, 4))
-            return 0;
-        if (symidx < symoffset)
-            return 0;
-
-        for ( ; ; symidx++)
+        if (strcmp(sname, name) == 0)
         {
-            uint32_t cur = 0;
-            if (remote_read(pid, chain_va + (uintptr_t)(symidx - symoffset) * 4, &cur, 4))
-                return 0;
-            Elf64_Sym sym;
-            if (remote_read(pid, symtab + (uintptr_t)symidx * sizeof(Elf64_Sym), &sym, sizeof(sym)))
-                return 0;
-            if (sym.st_name != 0)
-            {
-                char sname[256] = {0};
-                if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1) == 0 &&
-                    strcmp(sname, name) == 0)
-                {
-                    fprintf(stderr, "[injector]   found(GNU) %s @ 0x%lx\n", name, base + sym.st_value);
-                    return base + sym.st_value;
-                }
-            }
-            if (cur & 1)
-                break; // 链尾
+            fprintf(stderr, "[injector]   found(linear) %s @ 0x%lx\n", name, base + sym.st_value);
+            return base + sym.st_value; // PIE: 符号值需加基地址
         }
     }
 
     return 0;
 }
 
-static uintptr_t get_dlopen_addr(pid_t pid)
+// dlopen 定位结果：addr + 调用约定标记
+//   need_caller=0：标准 2 参 dlopen(const char*, int)，x2 忽略（填 0）
+//   need_caller=1：linker 内部 __dl_dlopen(filename, flags, caller_addr)，x2 必须给调用方地址
+typedef struct { uintptr_t addr; int need_caller; } dlopen_t;
+
+static dlopen_t get_dlopen_addr(pid_t pid)
 {
-    // 1. 优先从 libc / libdl 取标准 2 参 dlopen（调用约定最稳，所有现代 Android 都导出）
-    const char *mods[] = {"libc.so", "libdl.so", "libdl_android.so", NULL};
-    for (int i = 0; mods[i]; i++)
+    dlopen_t r = {0, 0};
+
+    // 候选（按优先级）：先标准 2 参 dlopen，再回退 linker 内部实现
+    struct cand { const char *mod; const char *name; int need_caller; };
+    struct cand tries[] = {
+        {"libc.so",          "dlopen",         0},
+        {"libdl.so",         "dlopen",         0},
+        {"libdl_android.so", "dlopen",         0},
+        {"linker64",         "dlopen",         1},
+        {"linker64",         "__dl_dlopen",    1},
+        {"linker64",         "__loader_dlopen",1},
+        {NULL, NULL, 0},
+    };
+
+    for (int i = 0; tries[i].mod; i++)
     {
-        uintptr_t b = find_module_base_by_name(pid, mods[i]);
+        uintptr_t b;
+        if (strcmp(tries[i].mod, "linker64") == 0)
+            b = find_linker_base(pid);
+        else
+            b = find_module_base_by_name(pid, tries[i].mod);
         if (!b)
             continue;
-        fprintf(stderr, "[injector] try %s base = 0x%lx\n", mods[i], b);
-        uintptr_t a = find_symbol_remote(pid, b, "dlopen");
+        fprintf(stderr, "[injector] try %s (\"%s\") base = 0x%lx\n", tries[i].mod, tries[i].name, b);
+        uintptr_t a = find_symbol_remote(pid, b, tries[i].name);
         if (a)
         {
-            fprintf(stderr, "[injector] dlopen(%s) = 0x%lx\n", mods[i], a);
-            return a;
+            fprintf(stderr, "[injector] %s(%s) = 0x%lx\n", tries[i].name, tries[i].mod, a);
+            r.addr = a;
+            r.need_caller = tries[i].need_caller;
+            return r;
         }
     }
 
-    // 2. 回退：linker64 内部的 dlopen / __dl_dlopen（真实实现）
-    uintptr_t base = find_linker_base(pid);
-    fprintf(stderr, "[injector] linker64 base = 0x%lx\n", base);
-    if (base)
-    {
-        uintptr_t a = find_symbol_remote(pid, base, "dlopen");
-        if (a)
-        {
-            fprintf(stderr, "[injector] dlopen(linker) = 0x%lx\n", a);
-            return a;
-        }
-        a = find_symbol_remote(pid, base, "__dl_dlopen");
-        if (a)
-        {
-            fprintf(stderr, "[injector] __dl_dlopen(linker) = 0x%lx\n", a);
-            return a;
-        }
-    }
-
-    return 0;
+    return r;
 }
 
 /* ---------- 执行注入 ---------- */
@@ -479,14 +490,14 @@ static int do_inject(pid_t pid, const char *so_path)
     waitpid(pid, &status, 0);
 
     // attach 之后跨进程内存读才稳（部分设备未 attach 时 process_vm_readv 被 SELinux 拦截）
-    uintptr_t dlopen_addr = get_dlopen_addr(pid);
-    if (!dlopen_addr)
+    dlopen_t dl = get_dlopen_addr(pid);
+    if (!dl.addr)
     {
         fprintf(stderr, "[injector] 未能在 linker64 / libdl / libc 中定位 dlopen\n");
         ptrace(PTRACE_DETACH, pid, 0, 0);
         return -1;
     }
-    fprintf(stderr, "[injector] dlopen @ 0x%lx\n", dlopen_addr);
+    fprintf(stderr, "[injector] dlopen @ 0x%lx (need_caller=%d)\n", dl.addr, dl.need_caller);
 
     struct user_pt_regs saved, regs;
     if (ptrace_getregs(pid, &saved) == -1)
@@ -520,8 +531,8 @@ static int do_inject(pid_t pid, const char *so_path)
 
     regs.regs[0] = path_addr;          // x0 = 路径
     regs.regs[1] = RTLD_NOW;           // x1 = RTLD_NOW
-    regs.regs[2] = tramp;              // x2 = caller_addr（__dl_dlopen 需要；标准 dlopen 忽略）
-    regs.pc = dlopen_addr;             // pc = dlopen
+    regs.regs[2] = dl.need_caller ? tramp : 0; // x2 = caller_addr（__dl_dlopen 需要；标准 dlopen 忽略）
+    regs.pc = dl.addr;                 // pc = dlopen
     regs.regs[30] = tramp;             // lr = 陷阱
 
     if (ptrace_setregs(pid, &regs) == -1)
