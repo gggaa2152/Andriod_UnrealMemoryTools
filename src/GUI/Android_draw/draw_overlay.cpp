@@ -273,10 +273,10 @@ namespace
         const int32_t ret = real_AInputQueue_getEvent(queue, outEvent);
         if (ret == 0 && outEvent && *outEvent && g_ready)
         {
+            // 只转发给 ImGui，绝不吞事件：
+            // TP 反作弊监控输入事件流，吞事件（置空）会被识别为注入并 tgkill 杀进程；
+            // 原样放行则输入流完整，TP 无异常可查，菜单（拖拽/点击）由 ImGui 处理。
             My_ImGui_ImplAndroid_HandleInputEvent(*outEvent);
-            // 菜单打开时吃掉触摸，避免游戏同时响应
-            if (g_menu_open)
-                *outEvent = nullptr;
         }
         return ret;
     }
@@ -297,17 +297,13 @@ namespace OverlayUI
             return false;
         }
 
-        // 输入 hook 暂禁用：
-        // pubgmhd 携带腾讯 TP 反作弊，会监控 AInputQueue 输入事件流；
-        // hook 并吞掉事件（*outEvent=nullptr）被识别为注入行为，触发 tgkill(SIGSEGV) 杀进程
-        // （实测 si_code=-6 SI_TKILL，崩溃 pc 落在 libandroid.so AInputQueue_getEvent 区域）。
-        // 先只保留渲染 hook 验证菜单稳定性，输入交互后续用更隐蔽方案再做。
-        // HookPltSymbol("libandroid.so", "AInputQueue_getEvent",
-        //               (void *)hook_AInputQueue_getEvent,
-        //               (void **)&real_AInputQueue_getEvent);
+        // 输入 hook：只转发不吞事件（TP 检测吞事件行为），让菜单可拖拽/点击
+        HookPltSymbol("libandroid.so", "AInputQueue_getEvent",
+                      (void *)hook_AInputQueue_getEvent,
+                      (void **)&real_AInputQueue_getEvent);
 
         g_installed = true;
-        LOGI("[OV] EGL overlay 安装成功：菜单将绘制在游戏画面上（输入 hook 已禁用）");
+        LOGI("[OV] EGL overlay 安装成功：菜单将绘制在游戏画面上（输入=只转发不吞）");
         return true;
     }
 
