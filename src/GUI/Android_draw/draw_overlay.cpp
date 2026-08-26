@@ -297,13 +297,17 @@ namespace OverlayUI
             return false;
         }
 
-        // 输入 hook（libandroid.so 若已加载）；失败不阻塞菜单显示
-        HookPltSymbol("libandroid.so", "AInputQueue_getEvent",
-                      (void *)hook_AInputQueue_getEvent,
-                      (void **)&real_AInputQueue_getEvent);
+        // 输入 hook 暂禁用：
+        // pubgmhd 携带腾讯 TP 反作弊，会监控 AInputQueue 输入事件流；
+        // hook 并吞掉事件（*outEvent=nullptr）被识别为注入行为，触发 tgkill(SIGSEGV) 杀进程
+        // （实测 si_code=-6 SI_TKILL，崩溃 pc 落在 libandroid.so AInputQueue_getEvent 区域）。
+        // 先只保留渲染 hook 验证菜单稳定性，输入交互后续用更隐蔽方案再做。
+        // HookPltSymbol("libandroid.so", "AInputQueue_getEvent",
+        //               (void *)hook_AInputQueue_getEvent,
+        //               (void **)&real_AInputQueue_getEvent);
 
         g_installed = true;
-        LOGI("[OV] EGL overlay 安装成功：菜单将绘制在游戏画面上");
+        LOGI("[OV] EGL overlay 安装成功：菜单将绘制在游戏画面上（输入 hook 已禁用）");
         return true;
     }
 
