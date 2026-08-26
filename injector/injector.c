@@ -277,8 +277,9 @@ static uint32_t gnu_hash(const char *s)
 // 在远程进程的 dynsym 中按名查找符号，支持 DT_HASH 与 DT_GNU_HASH 两套哈希表
 static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
 {
+    uintptr_t load_bias = base;
     Elf64_Ehdr eh;
-    if (remote_read(pid, base, &eh, sizeof(eh)))
+    if (remote_read(pid, load_bias, &eh, sizeof(eh)))
         return 0;
     if (memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0)
         return 0;
@@ -286,15 +287,28 @@ static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
         return 0;
 
     Elf64_Phdr ph[64];
-    if (remote_read(pid, base + eh.e_phoff, ph, sizeof(Elf64_Phdr) * eh.e_phnum))
+    if (remote_read(pid, load_bias + eh.e_phoff, ph, sizeof(Elf64_Phdr) * eh.e_phnum))
         return 0;
+
+    // 计算 load_bias：动态表里的 DT_SYMTAB/DT_STRTAB/DT_GNU_HASH 等 d_ptr 是
+    // “相对模块基址 0 的虚拟地址”，运行时真实地址 = load_bias + d_ptr。
+    // Android 的 PIE .so 首个 PT_LOAD 的 p_vaddr 通常为 0，故 load_bias == base；
+    // 这里按规范精确计算，避免直接拿 d_ptr 当地址去读（那样只会读到低位垃圾）。
+    for (int i = 0; i < eh.e_phnum; i++)
+    {
+        if (ph[i].p_type == PT_LOAD)
+        {
+            load_bias = base - ph[i].p_vaddr;
+            break;
+        }
+    }
 
     uintptr_t dyn_va = 0;
     for (int i = 0; i < eh.e_phnum; i++)
     {
         if (ph[i].p_type == PT_DYNAMIC)
         {
-            dyn_va = base + ph[i].p_vaddr;
+            dyn_va = load_bias + ph[i].p_vaddr;
             break;
         }
     }
@@ -309,10 +323,10 @@ static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
             return 0;
         switch (d.d_tag)
         {
-        case DT_SYMTAB:    symtab = d.d_un.d_ptr; break;
-        case DT_STRTAB:    strtab = d.d_un.d_ptr; break;
-        case DT_HASH:      hashtab = d.d_un.d_ptr; break;
-        case DT_GNU_HASH:  gnuhash = d.d_un.d_ptr; break;
+        case DT_SYMTAB:    symtab = load_bias + d.d_un.d_ptr; break;
+        case DT_STRTAB:    strtab = load_bias + d.d_un.d_ptr; break;
+        case DT_HASH:      hashtab = load_bias + d.d_un.d_ptr; break;
+        case DT_GNU_HASH:  gnuhash = load_bias + d.d_un.d_ptr; break;
         case DT_NULL:      goto done;
         default: break;
         }
@@ -413,7 +427,23 @@ done:
 
 static uintptr_t get_dlopen_addr(pid_t pid)
 {
-    // 1. linker64（dlopen 真实实现通常在这里）
+    // 1. 优先从 libc / libdl 取标准 2 参 dlopen（调用约定最稳，所有现代 Android 都导出）
+    const char *mods[] = {"libc.so", "libdl.so", "libdl_android.so", NULL};
+    for (int i = 0; mods[i]; i++)
+    {
+        uintptr_t b = find_module_base_by_name(pid, mods[i]);
+        if (!b)
+            continue;
+        fprintf(stderr, "[injector] try %s base = 0x%lx\n", mods[i], b);
+        uintptr_t a = find_symbol_remote(pid, b, "dlopen");
+        if (a)
+        {
+            fprintf(stderr, "[injector] dlopen(%s) = 0x%lx\n", mods[i], a);
+            return a;
+        }
+    }
+
+    // 2. 回退：linker64 内部的 dlopen / __dl_dlopen（真实实现）
     uintptr_t base = find_linker_base(pid);
     fprintf(stderr, "[injector] linker64 base = 0x%lx\n", base);
     if (base)
@@ -428,22 +458,6 @@ static uintptr_t get_dlopen_addr(pid_t pid)
         if (a)
         {
             fprintf(stderr, "[injector] __dl_dlopen(linker) = 0x%lx\n", a);
-            return a;
-        }
-    }
-
-    // 2. 回退：部分 ROM 的公开 dlopen 导出在 libdl / libc
-    const char *mods[] = {"libdl.so", "libdl_android.so", "libc.so", NULL};
-    for (int i = 0; mods[i]; i++)
-    {
-        uintptr_t b = find_module_base_by_name(pid, mods[i]);
-        if (!b)
-            continue;
-        fprintf(stderr, "[injector] try %s base = 0x%lx\n", mods[i], b);
-        uintptr_t a = find_symbol_remote(pid, b, "dlopen");
-        if (a)
-        {
-            fprintf(stderr, "[injector] dlopen(%s) = 0x%lx\n", mods[i], a);
             return a;
         }
     }
@@ -506,6 +520,7 @@ static int do_inject(pid_t pid, const char *so_path)
 
     regs.regs[0] = path_addr;          // x0 = 路径
     regs.regs[1] = RTLD_NOW;           // x1 = RTLD_NOW
+    regs.regs[2] = tramp;              // x2 = caller_addr（__dl_dlopen 需要；标准 dlopen 忽略）
     regs.pc = dlopen_addr;             // pc = dlopen
     regs.regs[30] = tramp;             // lr = 陷阱
 
