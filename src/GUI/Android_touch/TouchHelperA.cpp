@@ -458,7 +458,9 @@ namespace Touch {
         if (devices.empty()) {
             puts("获取屏幕驱动失败");
             return false;
-        }        int screenX = devices[0].absX.maximum;
+        }
+
+        int screenX = devices[0].absX.maximum;
         int screenY = devices[0].absY.maximum;
         if (screenX > screenY) {
             otherTouch = true;

@@ -1,7 +1,14 @@
 #include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <strings.h>
+#include <dirent.h>
 
 #include "my_imgui.h"
 #include "imgui_internal.h"
+#ifdef IMGUI_ENABLE_FREETYPE
+#include "imgui_freetype.h"
+#endif
 
 namespace ImGui {
     ImFont* SystemFont = NULL;
