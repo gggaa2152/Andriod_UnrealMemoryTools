@@ -201,11 +201,17 @@ namespace
         return anyHooked;
     }
 
+namespace OverlayUI
+{
+    int g_touchMode = 2; // 默认 2: 逆时针横屏270° (实测和平精英主流方向)  1: 顺时针横屏90°  0: 1:1直通
+}
+
+namespace
+{
     // ================= overlay 触摸校准与全链路诊断 =================
     static float g_physLong = 2400.0f;
     static float g_physShort = 1080.0f;
     static int g_touchLogCount = 0;
-    static int g_touchMode = 1; // 1: 顺时针横屏90° (主流)  2: 逆时针横屏270°  0: 1:1直通
 
     void OverlayInputTransform(float *x, float *y)
     {
@@ -228,7 +234,7 @@ namespace
             // 游戏渲染为横屏 (Landscape: 如 1520x1080 或 2400x1080)
             if (ry > (float)g_win_h || ry > g_physShort * 0.90f)
             {
-                if (g_touchMode == 2) {
+                if (OverlayUI::g_touchMode == 2) {
                     // 逆时针横屏 270° (充电口在左侧)
                     modeStr = "横屏270°(充电口在左)";
                     targetX = (g_physLong - ry) * ((float)g_win_w / g_physLong);
@@ -363,6 +369,19 @@ namespace
                 fg->AddText(ImVec2(io.MousePos.x + 30, io.MousePos.y - 20), IM_COL32(255, 255, 0, 255), tip);
             }
         }
+
+        // 🎯 屏幕右上角浮动快捷切换小药丸（单点直接切换 90°/270°/1:1）
+        ImGui::SetNextWindowPos(ImVec2(g_win_w - 240.0f, 12.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(230.0f, 42.0f), ImGuiCond_Always);
+        ImGui::Begin("##TouchDirSwitch", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+        char btnText[64];
+        snprintf(btnText, sizeof(btnText), "🔄 触控:%s", (OverlayUI::g_touchMode == 2 ? "270°(口在左)" : (OverlayUI::g_touchMode == 1 ? "90°(口在右)" : "1:1直通")));
+        if (ImGui::Button(btnText, ImVec2(225.0f, 36.0f)))
+        {
+            OverlayUI::g_touchMode = (OverlayUI::g_touchMode == 1 ? 2 : (OverlayUI::g_touchMode == 2 ? 0 : 1));
+            LOGI("[OV-TOUCH] 快捷切换触控方向 -> %s", (OverlayUI::g_touchMode == 2 ? "270°" : (OverlayUI::g_touchMode == 1 ? "90°" : "1:1")));
+        }
+        ImGui::End();
 
         ImGui::Render();
         glViewport(0, 0, g_win_w, g_win_h);

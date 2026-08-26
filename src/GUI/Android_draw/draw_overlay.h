@@ -20,4 +20,6 @@ namespace OverlayUI
     bool Install();
 
     bool IsActive();
+
+    extern int g_touchMode; // 1: 顺时针横屏90° (口在右)  2: 逆时针横屏270° (口在左)  0: 1:1直通
 }  // namespace OverlayUI
