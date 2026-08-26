@@ -55,7 +55,7 @@ static int ptrace_setregs(pid_t pid, struct user_pt_regs *regs)
 #define RTLD_NOW 0x2
 
 // 构建戳：每次改动后重新编译，设备上跑起来第一行会打印它，便于确认是否是最新二进制
-#define INJECTOR_BUILD "2026-08-26c-safe-isolate"
+#define INJECTOR_BUILD "2026-08-26d-safe-readv"
 
 static void die(const char *msg)
 {

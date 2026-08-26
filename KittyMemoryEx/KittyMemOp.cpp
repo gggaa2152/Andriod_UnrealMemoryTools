@@ -261,13 +261,7 @@ size_t KittyMemIO::Write(uintptr_t address, void *buffer, size_t len) const
 
 bool KittyMemDirect::init(pid_t pid)
 {
-    if (pid < 1)
-    {
-        KITTY_LOGE("KittyMemDirect: Invalid PID.");
-        return false;
-    }
-
-    _pid = pid;
+    _pid = pid > 0 ? pid : getpid();
     return true;
 }
 
@@ -276,8 +270,12 @@ size_t KittyMemDirect::Read(uintptr_t address, void *buffer, size_t len) const
     if (_pid < 1 || !address || !buffer || !len)
         return 0;
 
-    memcpy(buffer, reinterpret_cast<const void *>(address), len);
-    return len;
+    // 进程内安全读取：利用 process_vm_readv 读取自身虚拟地址，遇到非法/未映射指针直接返回 0 (EFAULT)，绝对不会产生 SIGSEGV 崩溃
+    struct iovec lvec { .iov_base = buffer, .iov_len = len };
+    struct iovec rvec { .iov_base = reinterpret_cast<void *>(address), .iov_len = len };
+
+    ssize_t bytes = call_process_vm_readv(_pid, &lvec, 1, &rvec, 1, 0);
+    return bytes > 0 ? bytes : 0;
 }
 
 size_t KittyMemDirect::Write(uintptr_t address, void *buffer, size_t len) const
@@ -285,13 +283,21 @@ size_t KittyMemDirect::Write(uintptr_t address, void *buffer, size_t len) const
     if (_pid < 1 || !address || !buffer || !len)
         return 0;
 
+    // 尝试安全写入
+    struct iovec lvec { .iov_base = buffer, .iov_len = len };
+    struct iovec rvec { .iov_base = reinterpret_cast<void *>(address), .iov_len = len };
+
+    ssize_t bytes = call_process_vm_writev(_pid, &lvec, 1, &rvec, 1, 0);
+    if (bytes > 0)
+        return bytes;
+
+    // 若由于只读页失败，临时解除写保护后写入
     const long page_size = sysconf(_SC_PAGESIZE);
     const uintptr_t page_start = address & ~(uintptr_t)(page_size - 1);
     const size_t span =
         ((address - page_start) + len + page_size - 1) & ~(size_t)(page_size - 1);
 
-    // 目标页可能为只读（如 .text / .rodata），临时解除写保护
     mprotect(reinterpret_cast<void *>(page_start), span, PROT_READ | PROT_WRITE | PROT_EXEC);
-    memcpy(reinterpret_cast<void *>(address), buffer, len);
-    return len;
+    bytes = call_process_vm_writev(_pid, &lvec, 1, &rvec, 1, 0);
+    return bytes > 0 ? bytes : 0;
 }
