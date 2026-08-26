@@ -36,8 +36,6 @@ extern void RunAutoProbeDump();
 
 namespace
 {
-    using UEMemory::kMgr;
-
     std::atomic<bool> g_installed{false};
     std::atomic<bool> g_ready{false};
     bool g_menu_open = true;
@@ -52,6 +50,16 @@ namespace
     bool HookPltSymbol(const char *module, const char *symName,
                        void *hookFn, void **origFn)
     {
+        // 使用本地内存后端（DIRECT 进程内直读）。
+        // 注意：不能依赖全局 UEMemory::kMgr —— overlay 安装发生在 ExecuteProbe 之前，
+        // kMgr 此时尚未 initialize，_pMemOp 为空会导致 ElfScanner 全部解析失败（有效模块=0）。
+        KittyMemoryMgr localMgr;
+        if (!localMgr.initialize(getpid(), EK_MEM_OP_DIRECT, false))
+        {
+            LOGE("[OV] 本地内存后端初始化失败");
+            return false;
+        }
+
         void *handle = dlopen(module, RTLD_NOW);
         if (!handle)
         {
@@ -79,7 +87,7 @@ namespace
                 continue;
             scannedMods++;
 
-            ElfScanner es = kMgr.elfScanner.createWithBase(m.startAddress);
+            ElfScanner es = localMgr.elfScanner.createWithBase(m.startAddress);
             if (!es.isValid())
                 continue;
             validMods++;
@@ -120,7 +128,7 @@ namespace
 
                 const size_t count = tbl.size / sizeof(Elf64_Rela);
                 std::vector<Elf64_Rela> rels(count);
-                if (!kMgr.readMem(tbl.addr, rels.data(), tbl.size))
+                if (!localMgr.readMem(tbl.addr, rels.data(), tbl.size))
                     continue;
 
                 for (const auto &rel : rels)
@@ -131,14 +139,14 @@ namespace
 
                     const size_t symIdx = (size_t)(rel.r_info >> 32);
                     Elf64_Sym sym{};
-                    if (!kMgr.readMem(symtab + (uintptr_t)symIdx * sizeof(Elf64_Sym),
+                    if (!localMgr.readMem(symtab + (uintptr_t)symIdx * sizeof(Elf64_Sym),
                                       &sym, sizeof(sym)))
                         continue;
                     if (!sym.st_name)
                         continue;
 
                     char name[128] = {0};
-                    if (!kMgr.readMem(strtab + sym.st_name, name, sizeof(name) - 1))
+                    if (!localMgr.readMem(strtab + sym.st_name, name, sizeof(name) - 1))
                         continue;
                     if (strcmp(name, symName) != 0)
                         continue;
@@ -146,7 +154,7 @@ namespace
                     // GOT 槽 = bias + r_offset
                     const uintptr_t slot = bias + rel.r_offset;
                     uintptr_t cur = 0;
-                    kMgr.readMem(slot, &cur, sizeof(cur));
+                    localMgr.readMem(slot, &cur, sizeof(cur));
 
                     // 不校验 cur == target：部分模块 lazy binding（槽未解析，指向 PLT stub），
                     // 直接改写槽即可，hook 函数内部会调用 dlsym 保存的原函数。
