@@ -221,8 +221,9 @@ namespace
         const float rx = *x;
         const float ry = *y;
 
-        // 动态追踪最大物理长边与短边（自适应 2K/1080P/720P/折叠屏）
-        if (rx > g_physLong) g_physLong = rx;
+        // 动态追踪最大物理长边与短边（自适应 2K/1080P/720P/折叠屏/平板 3392x2400）
+        if (rx > g_physShort && rx > g_physLong) g_physLong = rx;
+        else if (rx > g_physShort) g_physShort = rx;
         if (ry > g_physLong) g_physLong = ry;
 
         float targetX = rx;
@@ -287,6 +288,53 @@ namespace
         *y = targetY;
     }
 
+    // 自动探测当前设备真实屏幕物理硬件分辨率（支持任意手机/平板 2400x3392/折叠屏/2K）
+    void AutoDetectScreenPhysicalSize(float *outLong, float *outShort)
+    {
+        float pLong = 3392.0f;
+        float pShort = 2400.0f;
+
+        // 1. 从 Android 系统 wm size 查询物理分辨率
+        FILE *fp = popen("wm size 2>/dev/null", "r");
+        if (fp)
+        {
+            char buf[256] = {0};
+            while (fgets(buf, sizeof(buf), fp))
+            {
+                int w = 0, h = 0;
+                if (sscanf(buf, "Physical size: %dx%d", &w, &h) == 2 ||
+                    sscanf(buf, "Override size: %dx%d", &w, &h) == 2)
+                {
+                    if (w > 0 && h > 0)
+                    {
+                        pLong = (w >= h ? (float)w : (float)h);
+                        pShort = (w < h ? (float)w : (float)h);
+                    }
+                }
+            }
+            pclose(fp);
+        }
+
+        // 2. 从 Linux 显卡驱动 fb0 查询
+        if (pLong == 3392.0f && pShort == 2400.0f)
+        {
+            FILE *fb = fopen("/sys/class/graphics/fb0/virtual_size", "r");
+            if (fb)
+            {
+                int w = 0, h = 0;
+                if (fscanf(fb, "%d,%d", &w, &h) == 2 && w > 0 && h > 0)
+                {
+                    pLong = (w >= h ? (float)w : (float)h);
+                    pShort = (w < h ? (float)w : (float)h);
+                }
+                fclose(fb);
+            }
+        }
+
+        *outLong = pLong;
+        *outShort = pShort;
+    }
+
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
     {
         int w = 0, h = 0;
@@ -300,11 +348,10 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        // 初始物理长边/短边默认基准（和平精英/UE4 标准 2400x1080）
-        g_physLong = (w > 2400 ? (float)w : 2400.0f);
-        g_physShort = (h > 1080 ? (float)h : 1080.0f);
+        // 自动探测当前设备真实硬件物理尺寸（平板 3392x2400 / 手机 2400x1080 / 2K 3200x1440）
+        AutoDetectScreenPhysicalSize(&g_physLong, &g_physShort);
 
-        LOGI("[OV] EGL Surface=%dx%d, 物理屏幕基准=%.0fx%.0f (全链路触控自适应+屏幕光标可视化就绪)",
+        LOGI("[OV] EGL Surface=%dx%d, 硬件物理屏幕=%.0fx%.0f (全机型自适应矩阵就绪)",
              g_win_w, g_win_h, g_physLong, g_physShort);
 
         ImGui::CreateContext();
