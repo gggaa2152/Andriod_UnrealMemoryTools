@@ -53,7 +53,7 @@ std::vector<IGameProfile *> UE_Games = {
 
 namespace
 {
-    constexpr const char *kOutputDirectory = "/sdcard/UnrealMemoryTools";
+    constexpr const char *kOutputDirectory = "/data/1/Dump";   // 游戏进程(app uid)可写；/sdcard 公共目录无写权限
     constexpr size_t kMaxLogLines = 1500;
 
     enum class UiLang { ZH = 0, EN = 1 };
@@ -228,6 +228,31 @@ namespace
                 gDumpUiState.logLines.begin(),
                 gDumpUiState.logLines.begin() + (gDumpUiState.logLines.size() - kMaxLogLines));
         }
+    }
+
+    // 读取 /data/1/unrealmt.cfg 配置（注入后行为控制，替代被反作弊禁用的触摸按钮）
+    // 示例：auto_probe=0 / auto_dump=1
+    bool LoadCfgBool(const std::string &key, bool def)
+    {
+        std::ifstream f("/data/1/unrealmt.cfg");
+        if (!f.is_open())
+            return def;
+        std::string line;
+        while (std::getline(f, line))
+        {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            std::string k = line.substr(0, eq);
+            std::string v = line.substr(eq + 1);
+            while (!k.empty() && (k.back() == ' ' || k.back() == '\r'))
+                k.pop_back();
+            while (!v.empty() && (v.front() == ' ' || v.front() == '\r'))
+                v.erase(v.begin());
+            if (k == key)
+                return v == "1" || v == "true" || v == "on";
+        }
+        return def;
     }
 
     void LoggerSink(char level, const char *message)
@@ -1754,24 +1779,52 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
 // ============ 后台无界面自动探针 + Dump（overlay 首次渲染后也会自动触发） ============
 void RunAutoProbeDump()
 {
-    if (!gCandidates.empty())
+    // 行为由 /data/1/unrealmt.cfg 控制（auto_probe / auto_dump，默认 1）
+    const bool autoProbe = LoadCfgBool("auto_probe", true);
+    const bool autoDump = LoadCfgBool("auto_dump", true);
+
+    if (!autoProbe && !autoDump)
     {
-        LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
-        ExecuteProbe(gCandidates[0]);
-        LOGI("自动开始转储 UE SDK 到 /sdcard/UnrealMemoryTools/ ...");
-        ExecuteDump(gCandidates[0]);
-        LOGI("UE SDK 转储完成！请在 /sdcard/UnrealMemoryTools/ 查看导出的 SDK 文件。");
+        LOGI("[BKG] unrealmt.cfg 已关闭自动探测/Dump。当前触摸输入被反作弊禁用，菜单仅作状态显示。");
+        return;
     }
-    else
+
+    if (autoProbe)
     {
-        LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
-        AutoProcessCandidate selfCand;
-        selfCand.pid = getpid();
-        selfCand.package = "com.tencent.tmgp.pubgmhd";
-        selfCand.profileName = "AutoFix";
-        selfCand.dedicated = false;
-        ExecuteProbe(selfCand);
-        ExecuteDump(selfCand);
+        if (!gCandidates.empty())
+        {
+            LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
+            ExecuteProbe(gCandidates[0]);
+        }
+        else
+        {
+            LOGW("未在 maps 中检测到候选进程，尝试直连当前进程...");
+            AutoProcessCandidate selfCand;
+            selfCand.pid = getpid();
+            selfCand.package = "com.tencent.tmgp.pubgmhd";
+            selfCand.profileName = "AutoFix";
+            selfCand.dedicated = false;
+            ExecuteProbe(selfCand);
+        }
+    }
+
+    if (autoDump)
+    {
+        if (!gCandidates.empty())
+        {
+            LOGI("自动开始转储 UE SDK 到 /data/1/Dump/ ...");
+            ExecuteDump(gCandidates[0]);
+            LOGI("UE SDK 转储完成！请在 /data/1/Dump/ 查看导出的 SDK 文件。");
+        }
+        else
+        {
+            AutoProcessCandidate selfCand;
+            selfCand.pid = getpid();
+            selfCand.package = "com.tencent.tmgp.pubgmhd";
+            selfCand.profileName = "AutoFix";
+            selfCand.dedicated = false;
+            ExecuteDump(selfCand);
+        }
     }
 }
 
