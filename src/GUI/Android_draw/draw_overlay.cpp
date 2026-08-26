@@ -199,26 +199,22 @@ namespace
     }
 
     // ================= overlay 渲染 =================
-    // 触摸坐标自适应变换：
-    // 触摸事件给的是物理屏坐标（如 2400x2400），ImGui 画布是渲染 surface（1520x1080）。
-    // 动态学习触摸坐标的最大范围（= 物理分辨率），等比缩放到 surface 尺寸。
+    // 坐标模型：ImGui 逻辑坐标系 = 触摸坐标系（物理屏，如 2400x2400）。
+    // 触摸坐标【不换算】直接进 io（点哪是哪）；渲染时用 FramebufferScale
+    // 把逻辑坐标映射到实际 framebuffer（surface 1520x1080）。
+    float g_physW = 2400.f, g_physH = 2400.f;   // 物理屏尺寸（触摸学习收敛）
+
     void OverlayInputTransform(float *x, float *y)
     {
-        static float physW = 0.f, physH = 0.f;
         static bool logged = false;
-        if (*x > physW) physW = *x;
-        if (*y > physH) physH = *y;
-
-        if (g_win_w > 0 && g_win_h > 0)
-        {
-            if (physW > 0.f) *x = *x * (float)g_win_w / physW;
-            if (physH > 0.f) *y = *y * (float)g_win_h / physH;
-        }
-        if (!logged && physW > 100.f && physH > 100.f)
+        // 仅学习物理分辨率，不修改坐标
+        if (*x > g_physW) g_physW = *x;
+        if (*y > g_physH) g_physH = *y;
+        if (!logged && g_physW > 100.f && g_physH > 100.f && *x > 100.f && *y > 100.f)
         {
             logged = true;
             LOGI("[OV] 触摸物理分辨率 ≈ %.0fx%.0f -> surface %dx%d",
-                 physW, physH, g_win_w, g_win_h);
+                 g_physW, g_physH, g_win_w, g_win_h);
         }
     }
 
@@ -237,13 +233,14 @@ namespace
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
-        io.DisplaySize = ImVec2((float)w, (float)h);
+        io.DisplaySize = ImVec2(g_physW, g_physH);   // 逻辑系 = 触摸系
+        io.DisplayFramebufferScale = ImVec2((float)w / g_physW, (float)h / g_physH);
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
 
         ImGui_ImplOpenGL3_Init("#version 300 es");
         My_ImGui_ImplAndroid_Init(nullptr);
-        My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);   // 触摸坐标 -> surface 坐标系
+        My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);   // 仅学习物理分辨率
 
         // 复用当前 GL context 做纹理加载（不创建自己的 EGL context）
         ::graphics = std::make_unique<OpenGLGraphics>();
@@ -263,6 +260,12 @@ namespace
 
         My_ImGui_ImplAndroid_NewFrame();
         ImGui_ImplOpenGL3_NewFrame();
+
+        // 每帧同步逻辑坐标系（触摸学习可能更新物理分辨率）
+        ImGuiIO &io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(g_physW, g_physH);
+        io.DisplayFramebufferScale = ImVec2((float)g_win_w / g_physW, (float)g_win_h / g_physH);
+
         ImGui::NewFrame();
 
         Layout_tick_UI(&g_menu_open);

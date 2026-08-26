@@ -99,18 +99,19 @@ void drawBegin() {
 
 
 void Layout_tick_UI(bool *main_thread_flag) {
-    { 
+    {
         ImGui::SetNextWindowSize(ImVec2(1280.0f, 840.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(90.0f, 110.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowBgAlpha(0.92f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 18.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.2f);
-        ImGui::Begin("##UnrealMemoryToolsWindow", main_thread_flag,
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
+        // 使用 imgui 原生标题栏：左侧折叠箭头(收起菜单) + 拖动标题栏移动 + 右上角关闭
+        ImGui::Begin("UnrealMemoryTools 控制台", main_thread_flag,
+                     ImGuiWindowFlags_None);
         if (::permeate_record_ini) {
             ImGui::SetWindowPos({LastCoordinate.Pos_x, LastCoordinate.Pos_y});
             ImGui::SetWindowSize({LastCoordinate.Size_x, LastCoordinate.Size_y});
-            permeate_record_ini = false;   
+            permeate_record_ini = false;
         }
         RenderAutoUEDumpPanel(main_thread_flag);
         g_window = ImGui::GetCurrentWindow();
