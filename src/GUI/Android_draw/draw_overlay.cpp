@@ -202,124 +202,42 @@ namespace
     }
 
     // ================= overlay 触摸校准 =================
-    // 核心原理（与参考 main_8.cpp 一致）:
-    //   scaleX = egl_surface_width  / screen_physical_width
-    //   scaleY = egl_surface_height / screen_physical_height
-    // AMotionEvent_getX/Y 返回的是屏幕物理坐标 (0~physW, 0~physH)，
-    // ImGui DisplaySize = EGL Surface 尺寸 (可能是降采样的，如 1520x1080)。
-    // 必须用可靠方式获取屏幕物理分辨率，而不是"动态学习"——后者在用户未
-    // 碰到屏幕最边缘之前永远不准。
+    // UE4 与 Unity 的关键区别:
+    //   - Unity: EGL Surface 可能降采样(如1520x1080)，需要 scale = EGL/View
+    //   - UE4:   EGL Surface 通常 = 屏幕物理分辨率，scale = 1.0 (无需缩放)
+    // AMotionEvent_getX/Y 返回 Window 本地坐标 (= 屏幕物理坐标 for 全屏 Activity)
+    // ImGui DisplaySize = EGL Surface 尺寸
+    // 当两者相等时 → 1:1 直通（与 main_8.cpp scale=1.0 等价）
     static int g_screenPhysW = 0;
     static int g_screenPhysH = 0;
-
-    // 从 /sys/class/graphics/fb0/virtual_size 读取帧缓冲分辨率（最可靠）
-    static bool ReadFbVirtualSize(int *outW, int *outH)
-    {
-        FILE *fp = fopen("/sys/class/graphics/fb0/virtual_size", "r");
-        if (!fp) return false;
-        int w = 0, h = 0;
-        if (fscanf(fp, "%d,%d", &w, &h) == 2 && w > 0 && h > 0)
-        {
-            *outW = w;
-            *outH = h;
-            fclose(fp);
-            return true;
-        }
-        fclose(fp);
-        return false;
-    }
-
-    // 从 /sys/class/graphics/fb0/modes 读取（部分设备不提供 virtual_size）
-    static bool ReadFbModes(int *outW, int *outH)
-    {
-        FILE *fp = fopen("/sys/class/graphics/fb0/modes", "r");
-        if (!fp) return false;
-        char buf[256] = {0};
-        if (fgets(buf, sizeof(buf), fp))
-        {
-            // 格式通常为 "U:2400x1080p-60" 或 "S:1080x2400p-0"
-            int w = 0, h = 0;
-            char *p = strstr(buf, ":");
-            if (p && sscanf(p + 1, "%dx%d", &w, &h) == 2 && w > 0 && h > 0)
-            {
-                *outW = w;
-                *outH = h;
-                fclose(fp);
-                return true;
-            }
-        }
-        fclose(fp);
-        return false;
-    }
-
-    // 综合获取当前屏幕物理分辨率（按横屏游戏方向输出: W >= H）
-    static void ResolveScreenPhysicalSize(int *outW, int *outH)
-    {
-        int w = 0, h = 0;
-
-        // 方法1: sysfs framebuffer (最通用，不需要特殊权限)
-        if (ReadFbVirtualSize(&w, &h) && w > 0 && h > 0)
-        {
-            // virtual_size 可能包含双缓冲高度 (如 2400x2160 = 2400x1080*2)，取较小值
-            if (h > w * 2) h = h / 2;
-            if (w > h * 2) w = w / 2;
-            // 确保横屏: W >= H
-            *outW = (w >= h) ? w : h;
-            *outH = (w >= h) ? h : w;
-            LOGI("[OV] 屏幕物理分辨率 (fb0/virtual_size): %dx%d", *outW, *outH);
-            return;
-        }
-
-        // 方法2: sysfs fb modes
-        if (ReadFbModes(&w, &h) && w > 0 && h > 0)
-        {
-            *outW = (w >= h) ? w : h;
-            *outH = (w >= h) ? h : w;
-            LOGI("[OV] 屏幕物理分辨率 (fb0/modes): %dx%d", *outW, *outH);
-            return;
-        }
-
-        // 方法3: SurfaceComposer (需要一定系统权限，注入场景下可能成功也可能失败)
-        auto disp = android::ANativeWindowCreator::GetDisplayInfo();
-        if (disp.width > 0 && disp.height > 0)
-        {
-            w = (disp.width >= disp.height) ? disp.width : disp.height;
-            h = (disp.width >= disp.height) ? disp.height : disp.width;
-            // 检查是否是硬编码的 2400x1080 默认值（GetDisplayInfo 失败时返回）
-            // 如果是且与 EGL surface 差异极大，不信任
-            if (w != 2400 || h != 1080 || (g_win_w > 0 && abs(w - g_win_w) < g_win_w / 2))
-            {
-                *outW = w;
-                *outH = h;
-                LOGI("[OV] 屏幕物理分辨率 (SurfaceComposer): %dx%d", *outW, *outH);
-                return;
-            }
-        }
-
-        // 方法4: 最终回退 - 假设触摸坐标与 EGL Surface 1:1 (无缩放)
-        // 这在渲染分辨率 == 屏幕分辨率的设备上是正确的
-        *outW = g_win_w;
-        *outH = g_win_h;
-        LOGI("[OV] 屏幕物理分辨率 (回退=EGL Surface): %dx%d", *outW, *outH);
-    }
+    static int g_touchLogCount = 0;
 
     void OverlayInputTransform(float *x, float *y)
     {
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        // scale = EGL_surface / 屏幕物理 (与 main_8.cpp 的 g_gl_width / g_cached_view_width 完全等价)
-        float scaleX = 1.0f;
-        float scaleY = 1.0f;
-        if (g_screenPhysW > 0 && g_screenPhysH > 0)
+        // 调试日志：前20次触摸打印原始值，便于定位是缩放问题还是其他问题
+        if (g_touchLogCount < 20)
         {
-            scaleX = (float)g_win_w / (float)g_screenPhysW;
-            scaleY = (float)g_win_h / (float)g_screenPhysH;
+            g_touchLogCount++;
+            LOGI("[OV-TOUCH] #%d 原始坐标=(%.1f, %.1f) EGL=%dx%d phys=%dx%d",
+                 g_touchLogCount, *x, *y, g_win_w, g_win_h, g_screenPhysW, g_screenPhysH);
         }
 
-        *x = *x * scaleX;
-        *y = *y * scaleY;
+        // 仅当 EGL Surface 确实与屏幕物理不同时才缩放
+        // （UE4 通常相等，scale=1.0）
+        if (g_screenPhysW > 0 && g_screenPhysH > 0 &&
+            (g_screenPhysW != g_win_w || g_screenPhysH != g_win_h))
+        {
+            float scaleX = (float)g_win_w / (float)g_screenPhysW;
+            float scaleY = (float)g_win_h / (float)g_screenPhysH;
+            *x = *x * scaleX;
+            *y = *y * scaleY;
+        }
+        // 否则 1:1 直通，不做任何变换
 
+        // clamp
         if (*x < 0.0f) *x = 0.0f;
         if (*x > (float)g_win_w) *x = (float)g_win_w;
         if (*y < 0.0f) *y = 0.0f;
@@ -339,12 +257,18 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        // 获取屏幕物理分辨率用于触摸坐标缩放
-        ResolveScreenPhysicalSize(&g_screenPhysW, &g_screenPhysH);
-        LOGI("[OV] EGL Surface=%dx%d, 屏幕物理=%dx%d, scaleX=%.4f, scaleY=%.4f",
+        // 查询屏幕物理分辨率（仅在 EGL ≠ 屏幕 时才需要缩放）
+        auto disp = android::ANativeWindowCreator::GetDisplayInfo();
+        int physW = (disp.width >= disp.height) ? disp.width : disp.height;
+        int physH = (disp.width >= disp.height) ? disp.height : disp.width;
+        // GetDisplayInfo 失败时返回硬编码 2400x1080，此时不信任，用 EGL 尺寸
+        if (physW <= 0 || physH <= 0) { physW = w; physH = h; }
+        g_screenPhysW = physW;
+        g_screenPhysH = physH;
+
+        LOGI("[OV] EGL Surface=%dx%d, 屏幕物理=%dx%d, 需要缩放=%s",
              g_win_w, g_win_h, g_screenPhysW, g_screenPhysH,
-             g_screenPhysW > 0 ? (float)g_win_w / g_screenPhysW : 1.0f,
-             g_screenPhysH > 0 ? (float)g_win_h / g_screenPhysH : 1.0f);
+             (g_screenPhysW != g_win_w || g_screenPhysH != g_win_h) ? "是" : "否(1:1直通)");
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
@@ -369,7 +293,7 @@ namespace
         init_My_drawdata(dpiScale);
 
         g_ready = true;
-        LOGI("[OV] overlay 初始化完成 %dx%d (屏幕=%dx%d, scale=%.2f, 复用游戏 GL context)",
+        LOGI("[OV] overlay 初始化完成 EGL=%dx%d 物理=%dx%d scale=%.2f",
              w, h, g_screenPhysW, g_screenPhysH, dpiScale);
 
         // 自动执行探针 + SDK Dump（后台线程，菜单实时显示进度）
