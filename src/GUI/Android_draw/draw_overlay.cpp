@@ -45,8 +45,16 @@ namespace
     int g_win_w = 0, g_win_h = 0;
 
     // ================= 符号 GOT hook =================
-    // 遍历进程内所有 .so 模块的 .rela.plt / .rela.dyn，
-    // 把指向目标符号（如 eglSwapBuffers）的 GOT 槽改写为 hook 函数地址。
+    // 只 hook 游戏渲染核心模块（调用 eglSwapBuffers 的位置在 libUE4 等），
+    // 跳过腾讯保护库（libPx*）与系统库，避免触发反作弊完整性校验。
+    bool IsRenderModule(const std::string &path)
+    {
+        return path.find("libUE4.so") != std::string::npos ||
+               path.find("libUnreal.so") != std::string::npos ||
+               path.find("libclient.so") != std::string::npos ||
+               path.find("libShadowTrackerExtra.so") != std::string::npos;
+    }
+
     bool HookPltSymbol(const char *module, const char *symName,
                        void *hookFn, void **origFn)
     {
@@ -85,6 +93,8 @@ namespace
         {
             if (m.pathname.find(".so") == std::string::npos)
                 continue;
+            if (!IsRenderModule(m.pathname))
+                continue;   // 只处理游戏渲染核心模块
             scannedMods++;
 
             ElfScanner es = localMgr.elfScanner.createWithBase(m.startAddress);
@@ -161,13 +171,21 @@ namespace
                     LOGI("[OV] 匹配 %s %s @ %p (cur=%p -> hook=%p)", m.pathname.c_str(),
                          symName, (void *)slot, (void *)cur, hookFn);
 
-                    // 解除 RELRO 只读保护后写入
+                    // 解除保护后写入；写完恢复【原页权限】而非强制只读——
+                    // libUE4 的 GOT 页原为可写（懒绑定需继续写 GOT），
+                    // 若强制 PROT_READ 会导致下一次懒绑定写 GOT 时 SEGV_ACCERR。
                     const long pgsz = sysconf(_SC_PAGESIZE);
                     const uintptr_t pg = slot & ~(uintptr_t)(pgsz - 1);
                     mprotect((void *)pg, pgsz, PROT_READ | PROT_WRITE);
                     *(void **)slot = hookFn;
-                    mprotect((void *)pg, pgsz, PROT_READ);
                     __builtin___clear_cache((char *)slot, (char *)slot + sizeof(void *));
+
+                    const auto slotMap = KittyMemoryEx::getAddressMap(maps, slot);
+                    int origProt = PROT_NONE;
+                    if (slotMap.readable) origProt |= PROT_READ;
+                    if (slotMap.writeable) origProt |= PROT_WRITE;
+                    if (slotMap.executable) origProt |= PROT_EXEC;
+                    mprotect((void *)pg, pgsz, origProt);
 
                     anyHooked = true;
                     relocTotal++;
