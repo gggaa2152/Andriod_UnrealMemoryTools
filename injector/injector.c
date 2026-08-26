@@ -259,6 +259,16 @@ static uintptr_t find_linker_base(pid_t pid)
     return base;
 }
 
+// GNU hash（DT_GNU_HASH 使用的变体 djb2）
+static uint32_t gnu_hash(const char *s)
+{
+    uint32_t h = 5381;
+    for (unsigned char c = (unsigned char)*s; c != 0; c = (unsigned char)*s++)
+        h = h * 33 + c;
+    return h;
+}
+
+// 在远程进程的 dynsym 中按名查找符号，支持 DT_HASH 与 DT_GNU_HASH 两套哈希表
 static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
 {
     Elf64_Ehdr eh;
@@ -285,7 +295,7 @@ static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
     if (!dyn_va)
         return 0;
 
-    uintptr_t symtab = 0, strtab = 0, hashtab = 0;
+    uintptr_t symtab = 0, strtab = 0, hashtab = 0, gnuhash = 0;
     for (uintptr_t off = 0;; off += sizeof(Elf64_Dyn))
     {
         Elf64_Dyn d;
@@ -293,35 +303,97 @@ static uintptr_t find_symbol_remote(pid_t pid, uintptr_t base, const char *name)
             return 0;
         switch (d.d_tag)
         {
-        case DT_SYMTAB: symtab = d.d_un.d_ptr; break;
-        case DT_STRTAB: strtab = d.d_un.d_ptr; break;
-        case DT_HASH:   hashtab = d.d_un.d_ptr; break;
-        case DT_NULL:   goto done;
+        case DT_SYMTAB:    symtab = d.d_un.d_ptr; break;
+        case DT_STRTAB:    strtab = d.d_un.d_ptr; break;
+        case DT_HASH:      hashtab = d.d_un.d_ptr; break;
+        case DT_GNU_HASH:  gnuhash = d.d_un.d_ptr; break;
+        case DT_NULL:      goto done;
         default: break;
         }
     }
 done:
-    if (!symtab || !strtab || !hashtab)
+    if (!symtab || !strtab)
         return 0;
 
-    uint32_t h[2] = {0};
-    if (remote_read(pid, hashtab, h, 8))
-        return 0;
-    uint32_t nsyms = h[1]; // DT_HASH[1] = nchain = 符号数
-
-    for (uint32_t i = 0; i < nsyms; i++)
+    // ---- 经典 DT_HASH ----
+    if (hashtab)
     {
-        Elf64_Sym sym;
-        if (remote_read(pid, symtab + (uintptr_t)i * sizeof(Elf64_Sym), &sym, sizeof(sym)))
-            return 0;
-        if (sym.st_name == 0)
-            continue;
-        char sname[256] = {0};
-        if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1))
-            return 0;
-        if (strcmp(sname, name) == 0)
-            return base + sym.st_value; // PIE: 符号值需加基地址
+        uint32_t h[2] = {0};
+        if (remote_read(pid, hashtab, h, 8) == 0)
+        {
+            uint32_t nsyms = h[1]; // nchain = 符号数
+            for (uint32_t i = 0; i < nsyms; i++)
+            {
+                Elf64_Sym sym;
+                if (remote_read(pid, symtab + (uintptr_t)i * sizeof(Elf64_Sym), &sym, sizeof(sym)))
+                    return 0;
+                if (sym.st_name == 0)
+                    continue;
+                char sname[256] = {0};
+                if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1))
+                    return 0;
+                if (strcmp(sname, name) == 0)
+                    return base + sym.st_value; // PIE: 符号值需加基地址
+            }
+        }
     }
+
+    // ---- 回退 DT_GNU_HASH（现代 Android linker 用它） ----
+    if (gnuhash)
+    {
+        uint32_t hdr[4] = {0};
+        if (remote_read(pid, gnuhash, hdr, 16))
+            return 0;
+        uint32_t nbuckets   = hdr[0];
+        uint32_t symoffset  = hdr[1];
+        uint32_t bloom_size = hdr[2];
+        uint32_t bloom_shift = hdr[3];
+        if (bloom_size == 0 || nbuckets == 0)
+            return 0;
+
+        uintptr_t bloom_va   = gnuhash + 16;
+        uintptr_t buckets_va = bloom_va + (uintptr_t)bloom_size * 8;
+        uintptr_t chain_va   = buckets_va + (uintptr_t)nbuckets * 4;
+
+        uint32_t h = gnu_hash(name);
+
+        // bloom 过滤（64 位字）
+        uint32_t word_idx = (h / 64) & (bloom_size - 1);
+        uint64_t bloom_word = 0;
+        if (remote_read(pid, bloom_va + (uintptr_t)word_idx * 8, &bloom_word, 8))
+            return 0;
+        uint32_t bit1 = h & 63;
+        uint32_t bit2 = (h >> bloom_shift) & 63;
+        if (((bloom_word >> bit1) & 1) == 0 || ((bloom_word >> bit2) & 1) == 0)
+            return 0; // bloom 判定不存在，跳过
+
+        uint32_t bucket = h % nbuckets;
+        uint32_t symidx = 0;
+        if (remote_read(pid, buckets_va + (uintptr_t)bucket * 4, &symidx, 4))
+            return 0;
+        if (symidx < symoffset)
+            return 0;
+
+        for ( ; ; symidx++)
+        {
+            uint32_t cur = 0;
+            if (remote_read(pid, chain_va + (uintptr_t)(symidx - symoffset) * 4, &cur, 4))
+                return 0;
+            Elf64_Sym sym;
+            if (remote_read(pid, symtab + (uintptr_t)symidx * sizeof(Elf64_Sym), &sym, sizeof(sym)))
+                return 0;
+            if (sym.st_name != 0)
+            {
+                char sname[256] = {0};
+                if (remote_read(pid, strtab + sym.st_name, sname, sizeof(sname) - 1) == 0 &&
+                    strcmp(sname, name) == 0)
+                    return base + sym.st_value;
+            }
+            if (cur & 1)
+                break; // 链尾
+        }
+    }
+
     return 0;
 }
 
@@ -330,7 +402,11 @@ static uintptr_t get_dlopen_addr(pid_t pid)
     uintptr_t base = find_linker_base(pid);
     if (!base)
         return 0;
-    return find_symbol_remote(pid, base, "dlopen");
+    // 部分 Android 版本导出名是 __dl_dlopen
+    uintptr_t addr = find_symbol_remote(pid, base, "dlopen");
+    if (!addr)
+        addr = find_symbol_remote(pid, base, "__dl_dlopen");
+    return addr;
 }
 
 /* ---------- 执行注入 ---------- */
