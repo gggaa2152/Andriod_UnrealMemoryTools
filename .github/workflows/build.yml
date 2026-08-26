@@ -42,16 +42,16 @@ jobs:
           ls -lh outputs/arm64-v8a/
           ls -lh injector/outputs/arm64-v8a/
 
-      - name: Upload libUnrealMemoryTools.so
-        uses: actions/upload-artifact@v4
-        with:
-          name: libUnrealMemoryTools-arm64-v8a
-          path: outputs/arm64-v8a/
-          if-no-files-found: error
+      - name: Prepare combined bundle
+        run: |
+          mkdir -p bundle
+          cp outputs/arm64-v8a/libUnrealMemoryTools.so bundle/
+          cp injector/outputs/arm64-v8a/injector bundle/
+          ls -lh bundle/
 
-      - name: Upload injector
+      - name: Upload combined artifact (编译产物打包)
         uses: actions/upload-artifact@v4
         with:
-          name: injector-arm64-v8a
-          path: injector/outputs/arm64-v8a/injector
+          name: UnrealMemoryTools-bundle-arm64-v8a
+          path: bundle/
           if-no-files-found: error
