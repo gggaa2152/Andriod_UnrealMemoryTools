@@ -300,10 +300,15 @@ namespace
         const int32_t ret = real_AInputQueue_getEvent(queue, outEvent);
         if (ret == 0 && outEvent && *outEvent && g_ready)
         {
-            // 只转发给 ImGui，绝不吞事件：
-            // TP 反作弊监控输入事件流，吞事件（置空）会被识别为注入并 tgkill 杀进程；
-            // 原样放行则输入流完整，TP 无异常可查，菜单（拖拽/点击）由 ImGui 处理。
+            // 触摸转发给 ImGui（菜单可交互）
             My_ImGui_ImplAndroid_HandleInputEvent(*outEvent);
+
+            // 借鉴金铲铲参考实现：ImGui 需要鼠标（点在/拖在菜单内）时
+            // 吞掉事件不透传给游戏，避免菜单操作与游戏冲突；菜单外正常透传。
+            // 只在菜单命中时截断，输入流大部分保持完整，TP 不易察觉。
+            ImGuiIO &io = ImGui::GetIO();
+            if (io.WantCaptureMouse)
+                *outEvent = nullptr;
         }
         return ret;
     }
