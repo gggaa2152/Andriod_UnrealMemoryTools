@@ -215,16 +215,15 @@ namespace
             LOGI("[OV] 触摸物理分辨率 ≈ %.0fx%.0f -> surface %dx%d (等比缩放)",
                  g_physW, g_physH, g_win_w, g_win_h);
         }
-        // 等比缩放到 surface（取 min，按宽高较小方向贴合，水平/竖直居中）
+        // 等比映射到 surface（letterbox 模型）：
+        // 游戏 surface(1520x1080) 显示到方屏(2400x2400) 时按宽贴合等比放大，
+        // 水平满宽、垂直居中留黑边 → scale = win_w/physW，y 减去黑边偏移。
         if (g_win_w > 0 && g_win_h > 0 && g_physW > 0.f && g_physH > 0.f)
         {
-            const float scale = (g_win_w / g_physW < g_win_h / g_physH)
-                              ? g_win_w / g_physW : g_win_h / g_physH;
-            const float scaledW = g_physW * scale;
-            const float scaledH = g_physH * scale;
-            const float offX = (g_win_w - scaledW) * 0.5f;
-            const float offY = (g_win_h - scaledH) * 0.5f;
-            *x = *x * scale + offX;
+            const float scale = g_win_w / g_physW;
+            *x = *x * scale;
+            const float physScaledH = g_physH * scale;
+            const float offY = (g_win_h - physScaledH) * 0.5f;   // 负值：上下黑边在触摸系内
             *y = *y * scale + offY;
         }
     }
