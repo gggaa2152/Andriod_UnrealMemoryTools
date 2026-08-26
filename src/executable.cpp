@@ -1757,16 +1757,80 @@ int ExecutableMain()
     setbuf(stdin, nullptr);
 
     Logger::SetSink(LoggerSink);
-    LOGI("UnrealMemoryTools (Hook 进程内模式): 启动 UE 探针与自动 SDK Dump 工作流...");
+    LOGI("UnrealMemoryTools (Hook 进程内模式): 启动 UE 探针 / SDK Dump 工作流...");
     RefreshCandidates();
 
+    // ============ 阶段1: 尝试创建悬浮菜单 UI ============
+    LOGI("[UI] 阶段1: 创建 Vulkan 图形后端...");
+    ::graphics = GraphicsManager::getGraphicsInterface(GraphicsManager::VULKAN);
+    if (!::graphics)
+    {
+        LOGE("[UI] 创建图形后端失败 (Vulkan 不可用)，转入后台无界面模式。");
+    }
+    else
+    {
+        LOGI("[UI] 图形后端创建成功，获取屏幕信息...");
+        ::screen_config();
+        ::native_window_screen_x = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        ::native_window_screen_y = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        ::abs_ScreenX = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        ::abs_ScreenY = (::displayInfo.height < ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        LOGI("[UI] 屏幕: %dx%d (orientation=%d)", ::native_window_screen_x, ::native_window_screen_y, ::displayInfo.orientation);
+
+        LOGI("[UI] 阶段2: 创建悬浮窗口 (SurfaceComposerClient)...");
+        ::window = android::ANativeWindowCreator::Create("UnrealMemoryTools", native_window_screen_x, native_window_screen_y, permeate_record);
+        if (::window)
+            LOGI("[UI] 悬浮窗口创建成功: %p", (void*)::window);
+        else
+            LOGW("[UI] 悬浮窗口创建失败 (App 沙箱/SELinux 限制)");
+
+        if (::window && graphics->Init_Render(::window, native_window_screen_x, native_window_screen_y))
+        {
+            LOGI("[UI] 阶段3: Render/ImGui 初始化成功，进入渲染循环...");
+            Touch::Init({(float)::abs_ScreenX, (float)::abs_ScreenY}, false);
+            Touch::setOrientation(displayInfo.orientation);
+            ::init_My_drawdata();
+
+            bool flag = true;
+            while (flag)
+            {
+                drawBegin();
+                if (permeate_record == false)
+                    android::ANativeWindowCreator::ProcessMirrorDisplay();
+                graphics->NewFrame();
+                Layout_tick_UI(&flag);
+                graphics->EndFrame();
+            }
+
+            if (gWorkerThread.joinable())
+                gWorkerThread.join();
+
+            Touch::Close();
+            graphics->Shutdown();
+            android::ANativeWindowCreator::Destroy(::window);
+            Logger::SetSink(nullptr);
+            return 0;
+        }
+        else
+        {
+            LOGE("[UI] Render 初始化失败，销毁窗口并转入后台无界面模式。");
+            if (::window)
+            {
+                android::ANativeWindowCreator::Destroy(::window);
+                ::window = nullptr;
+            }
+        }
+    }
+
+    // ============ 阶段2: 后台无界面自动探针 + Dump ============
+    LOGW("[BKG] 后台无界面模式: 自动执行 UE 探针与 SDK Dump...");
     if (!gCandidates.empty())
     {
         LOGI("自动开始对当前进程 (pid=%d pkg=%s) 进行 UE 探针分析...", gCandidates[0].pid, gCandidates[0].package.c_str());
         ExecuteProbe(gCandidates[0]);
-        LOGI("自动开始转储 UE SDK 到 /data/1/Dump/ ...");
+        LOGI("自动开始转储 UE SDK 到 /sdcard/UnrealMemoryTools/ ...");
         ExecuteDump(gCandidates[0]);
-        LOGI("UE SDK 转储完成！请在 /data/1/Dump/ 查看导出的 SDK 文件。");
+        LOGI("UE SDK 转储完成！请在 /sdcard/UnrealMemoryTools/ 查看导出的 SDK 文件。");
     }
     else
     {
