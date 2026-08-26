@@ -304,14 +304,21 @@ namespace
         My_ImGui_ImplAndroid_Init(nullptr);
         My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);
 
-        // 载入中文字体（与原流程一致）
-        init_My_drawdata(0.0f);
+        // 计算当前 Overlay 分辨率下的 DPI 缩放比例
+        float minDim = (g_win_w < g_win_h) ? (float)g_win_w : (float)g_win_h;
+        float dpiScale = minDim / 1080.0f;
+        if (dpiScale < 0.85f) dpiScale = 0.85f;
+        if (dpiScale > 2.2f)  dpiScale = 2.2f;
+
+        // 复用当前 GL context 做纹理加载（不创建独立 context）
+        ::graphics = std::make_unique<OpenGLGraphics>();
+        init_My_drawdata(dpiScale);
 
         // 触发自动探针 / Dump 线程
         std::thread(RunAutoProbeDump).detach();
 
         g_ready = true;
-        LOGI("[OV] EGL Overlay 初始化完成，逻辑画布=%dx%d", g_win_w, g_win_h);
+        LOGI("[OV] EGL Overlay 初始化完成，逻辑画布=%dx%d (scale=%.2f)", g_win_w, g_win_h, dpiScale);
     }
 
     void OverlayFrame()
