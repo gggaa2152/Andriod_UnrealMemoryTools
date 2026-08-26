@@ -29,7 +29,26 @@
 #include <sys/user.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/procfs.h>
 #include <elf.h>
+
+// aarch64 的 bionic <sys/ptrace.h> 未定义 GETREGS/SETREGS，
+// 必须使用 GETREGSET/SETREGSET（addr = NT_PRSTATUS）。这里做兼容封装。
+#ifndef NT_PRSTATUS
+#define NT_PRSTATUS 1
+#endif
+
+static int ptrace_getregs(pid_t pid, struct user_pt_regs *regs)
+{
+    struct iovec io = { regs, sizeof(*regs) };
+    return ptrace(PTRACE_GETREGSET, pid, (void *)(uintptr_t)NT_PRSTATUS, &io) == 0 ? 0 : -1;
+}
+
+static int ptrace_setregs(pid_t pid, struct user_pt_regs *regs)
+{
+    struct iovec io = { regs, sizeof(*regs) };
+    return ptrace(PTRACE_SETREGSET, pid, (void *)(uintptr_t)NT_PRSTATUS, &io) == 0 ? 0 : -1;
+}
 
 #define RTLD_NOW 0x2
 
@@ -243,7 +262,7 @@ static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
     waitpid(pid, &status, 0);
 
     struct user_pt_regs saved, regs;
-    if (ptrace(PTRACE_GETREGS, pid, 0, &saved) == -1)
+    if (ptrace_getregs(pid, &saved) == -1)
     {
         die("GETREGS 失败");
         ptrace(PTRACE_DETACH, pid, 0, 0);
@@ -277,7 +296,7 @@ static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
     regs.pc = dlopen_addr;             // pc = dlopen
     regs.regs[30] = tramp;             // lr = 陷阱
 
-    if (ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1)
+    if (ptrace_setregs(pid, &regs) == -1)
     {
         die("SETREGS 失败");
         ptrace(PTRACE_DETACH, pid, 0, 0);
@@ -287,7 +306,7 @@ static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
     ptrace(PTRACE_CONT, pid, 0, 0);
     waitpid(pid, &status, 0);
 
-    if (ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1)
+    if (ptrace_getregs(pid, &regs) == -1)
     {
         die("GETREGS(返回) 失败");
         ptrace(PTRACE_DETACH, pid, 0, 0);
@@ -298,7 +317,7 @@ static int do_inject(pid_t pid, const char *so_path, uintptr_t dlopen_addr)
     fprintf(stderr, "[injector] dlopen 返回 handle = 0x%lx\n", handle);
 
     // 恢复原始寄存器并脱离
-    ptrace(PTRACE_SETREGS, pid, 0, &saved);
+    ptrace_setregs(pid, &saved);
     ptrace(PTRACE_DETACH, pid, 0, 0);
 
     return handle ? 0 : -1;
