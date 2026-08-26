@@ -199,8 +199,8 @@ namespace
     }
 
     // ================= overlay 触摸校准 =================
-    // 当游戏渲染分辨率(EGL Surface, 如 1520x1080) 与 屏幕/窗口输入物理坐标系(如 2400x1080)
-    // 存在差异时，动态计算并校准触摸比例，确保点击位置与菜单完全 100% 像素级对齐。
+    // 默认 1:1 精确映射；若游戏使用降采样渲染(如 1520 buffer 在 2400 物理屏上)，
+    // 当收到超出 1520 的触摸坐标时，动态学习并自适应等比缩放，确保全机型 100% 像素级精准。
     static float g_touchMaxX = 0.0f;
     static float g_touchMaxY = 0.0f;
 
@@ -209,17 +209,15 @@ namespace
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        // 动态学习并自适应最大触摸边界
+        if (g_touchMaxX <= 0.0f) g_touchMaxX = (float)g_win_w;
+        if (g_touchMaxY <= 0.0f) g_touchMaxY = (float)g_win_h;
+
+        // 仅当用户触摸物理坐标超出当前 Surface 渲染尺寸时才扩张基准（自适应降采样游戏）
         if (*x > g_touchMaxX) g_touchMaxX = *x;
         if (*y > g_touchMaxY) g_touchMaxY = *y;
 
-        // 若物理触摸边界大于渲染 surface 尺寸，按比例进行自适应映射
-        float scaleX = 1.0f;
-        float scaleY = 1.0f;
-        if (g_touchMaxX > (float)g_win_w)
-            scaleX = (float)g_win_w / g_touchMaxX;
-        if (g_touchMaxY > (float)g_win_h)
-            scaleY = (float)g_win_h / g_touchMaxY;
+        const float scaleX = (float)g_win_w / g_touchMaxX;
+        const float scaleY = (float)g_win_h / g_touchMaxY;
 
         *x = *x * scaleX;
         *y = *y * scaleY;
@@ -243,22 +241,9 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        // 初始化触摸物理尺寸基准
-        auto disp = android::ANativeWindowCreator::GetDisplayInfo();
-        float maxDim = (float)(disp.height > disp.width ? disp.height : disp.width);
-        float minDimDisp = (float)(disp.height < disp.width ? disp.height : disp.width);
-        if (maxDim > 0.0f && minDimDisp > 0.0f) {
-            if (disp.orientation == 1 || disp.orientation == 3) {
-                g_touchMaxX = maxDim;
-                g_touchMaxY = minDimDisp;
-            } else {
-                g_touchMaxX = minDimDisp;
-                g_touchMaxY = maxDim;
-            }
-        } else {
-            g_touchMaxX = (float)g_win_w;
-            g_touchMaxY = (float)g_win_h;
-        }
+        // 初始物理触摸边界基准设为当前渲染 surface 尺寸
+        g_touchMaxX = (float)g_win_w;
+        g_touchMaxY = (float)g_win_h;
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();

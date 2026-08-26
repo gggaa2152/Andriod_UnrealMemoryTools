@@ -299,38 +299,32 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
 
             switch (event_action) {
                 case AMOTION_EVENT_ACTION_DOWN:
-                case AMOTION_EVENT_ACTION_POINTER_DOWN:
-                    if ((AMotionEvent_getToolType(input_event, event_pointer_index) == AMOTION_EVENT_TOOL_TYPE_FINGER)
-                        || (AMotionEvent_getToolType(input_event, event_pointer_index) ==
-                            AMOTION_EVENT_TOOL_TYPE_UNKNOWN)) {
-                        float mx = AMotionEvent_getX(input_event, event_pointer_index);
-                        float my = AMotionEvent_getY(input_event, event_pointer_index);
-                        ApplyInputTransform(&mx, &my);
-                        io.AddMousePosEvent(mx, my);
-                        io.AddMouseButtonEvent(0, true);
-                    }
+                case AMOTION_EVENT_ACTION_POINTER_DOWN: {
+                    float mx = AMotionEvent_getX(input_event, event_pointer_index);
+                    float my = AMotionEvent_getY(input_event, event_pointer_index);
+                    ApplyInputTransform(&mx, &my);
+                    io.AddMousePosEvent(mx, my);
+                    io.AddMouseButtonEvent(0, true);
                     break;
+                }
                 case AMOTION_EVENT_ACTION_UP:
                 case AMOTION_EVENT_ACTION_POINTER_UP:
-                case AMOTION_EVENT_ACTION_CANCEL:
-                    if ((AMotionEvent_getToolType(input_event, event_pointer_index) == AMOTION_EVENT_TOOL_TYPE_FINGER)
-                        || (AMotionEvent_getToolType(input_event, event_pointer_index) ==
-                            AMOTION_EVENT_TOOL_TYPE_UNKNOWN)) {
-                        float mx = AMotionEvent_getX(input_event, event_pointer_index);
-                        float my = AMotionEvent_getY(input_event, event_pointer_index);
-                        ApplyInputTransform(&mx, &my);
-                        io.AddMousePosEvent(mx, my);
-                        io.AddMouseButtonEvent(0, false);
-                    }
+                case AMOTION_EVENT_ACTION_CANCEL: {
+                    float mx = AMotionEvent_getX(input_event, event_pointer_index);
+                    float my = AMotionEvent_getY(input_event, event_pointer_index);
+                    ApplyInputTransform(&mx, &my);
+                    io.AddMousePosEvent(mx, my);
+                    io.AddMouseButtonEvent(0, false);
                     break;
+                }
                 case AMOTION_EVENT_ACTION_BUTTON_PRESS:
                 case AMOTION_EVENT_ACTION_BUTTON_RELEASE: {
                     int32_t button_state = AMotionEvent_getButtonState(input_event);
                     io.AddMouseButtonEvent(0, (button_state & AMOTION_EVENT_BUTTON_PRIMARY) != 0);
                     io.AddMouseButtonEvent(1, (button_state & AMOTION_EVENT_BUTTON_SECONDARY) != 0);
                     io.AddMouseButtonEvent(2, (button_state & AMOTION_EVENT_BUTTON_TERTIARY) != 0);
-                }
                     break;
+                }
                 case AMOTION_EVENT_ACTION_HOVER_MOVE: // Hovering: Tool moves while NOT pressed (such as a physical mouse)
                 case AMOTION_EVENT_ACTION_MOVE:       // Touch pointer moves while DOWN
                 {
@@ -338,8 +332,8 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
                     float my = AMotionEvent_getY(input_event, event_pointer_index);
                     ApplyInputTransform(&mx, &my);
                     io.AddMousePosEvent(mx, my);
-                }
                     break;
+                }
                 case AMOTION_EVENT_ACTION_SCROLL:
                     io.AddMouseWheelEvent(
                             AMotionEvent_getAxisValue(input_event, AMOTION_EVENT_AXIS_HSCROLL, event_pointer_index),
