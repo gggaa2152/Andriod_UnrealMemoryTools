@@ -347,6 +347,13 @@ namespace IOUtils
             *p = '/';
         }
         errno = 0;
-        return mkdir(tmp.c_str(), mode);
+        if (mkdir(tmp.c_str(), mode) == -1)
+        {
+            // 目录已存在视为成功（/sdcard FUSE 上 delete+mkdir 可能有删除延迟）
+            if (errno == EEXIST)
+                return 0;
+            return -1;
+        }
+        return 0;
     }
 }  // namespace IOUtils
