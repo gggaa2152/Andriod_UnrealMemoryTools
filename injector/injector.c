@@ -54,6 +54,9 @@ static int ptrace_setregs(pid_t pid, struct user_pt_regs *regs)
 
 #define RTLD_NOW 0x2
 
+// 构建戳：每次改动后重新编译，设备上跑起来第一行会打印它，便于确认是否是最新二进制
+#define INJECTOR_BUILD "2026-08-26b-linear2"
+
 static void die(const char *msg)
 {
     fprintf(stderr, "[injector] %s: %s\n", msg, strerror(errno));
@@ -389,8 +392,9 @@ done:
         if (remote_read(pid, hashtab, h, 8) == 0)
             nsyms = h[1]; // nchain == 符号数
     }
-    if (nsyms == 0 && gnuhash)
-        nsyms = gnu_nsyms(pid, gnuhash);
+    uint32_t nsyms_gnu = gnuhash ? gnu_nsyms(pid, gnuhash) : 0;
+    if (nsyms_gnu > nsyms)
+        nsyms = nsyms_gnu; // 取 DT_HASH / GNU 二者较大者，避免数量算小漏掉符号
     if (nsyms == 0)
     {
         for (int i = 0; i < eh.e_phnum; i++)
@@ -407,9 +411,9 @@ done:
             }
         }
     }
-    fprintf(stderr, "[injector]   nsyms = %u\n", nsyms);
     if (nsyms == 0)
-        return 0;
+        nsyms = 1; // 保底至少扫一个，避免没拿到数量就直接放弃
+    fprintf(stderr, "[injector]   nsyms = %u\n", nsyms);
 
     // 线性扫描全部 dynsym（不依赖 bloom/chain，最稳健）
     for (uint32_t i = 0; i < nsyms; i++)
@@ -424,8 +428,8 @@ done:
             return 0;
         if (strcmp(sname, name) == 0)
         {
-            fprintf(stderr, "[injector]   found(linear) %s @ 0x%lx\n", name, base + sym.st_value);
-            return base + sym.st_value; // PIE: 符号值需加基地址
+            fprintf(stderr, "[injector]   found(linear) %s @ 0x%lx\n", name, load_bias + sym.st_value);
+            return load_bias + sym.st_value; // 运行时地址 = load_bias + st_value
         }
     }
 
@@ -436,6 +440,71 @@ done:
 //   need_caller=0：标准 2 参 dlopen(const char*, int)，x2 忽略（填 0）
 //   need_caller=1：linker 内部 __dl_dlopen(filename, flags, caller_addr)，x2 必须给调用方地址
 typedef struct { uintptr_t addr; int need_caller; } dlopen_t;
+
+// 兜底：扫描目标进程所有已加载模块（不仅限于 libc/linker），找第一个导出的 dlopen
+// 系列符号。用于应对某些 ROM 把 dlopen 放在非常规模块的情况。
+static dlopen_t find_dlopen_in_all_modules(pid_t pid)
+{
+    char maps[256];
+    snprintf(maps, sizeof(maps), "/proc/%d/maps", pid);
+    FILE *f = fopen(maps, "r");
+    if (!f)
+        return (dlopen_t){0, 0};
+
+    char line[512];
+    char seen[128][256]; // 已扫描过的模块路径去重
+    int nseen = 0;
+    const char *names[] = {"dlopen", "__dl_dlopen", "__loader_dlopen", NULL};
+
+    while (fgets(line, sizeof(line), f))
+    {
+        uintptr_t start = 0;
+        if (sscanf(line, "%lx-", &start) != 1)
+            continue;
+
+        // 取该行末尾的文件路径
+        char *path = NULL;
+        for (char *q = line; *q; q++)
+            if (*q == ' ')
+                path = q + 1;
+        if (!path || *path == '\n' || *path == 0)
+            continue;
+        // 去掉末尾换行/空格
+        size_t plen = strlen(path);
+        while (plen > 0 && (path[plen - 1] == '\n' || path[plen - 1] == ' '))
+            path[--plen] = 0;
+        // 只关心共享库 / linker
+        if (!strstr(path, ".so") && !strstr(path, "linker"))
+            continue;
+
+        // 去重：同一模块只扫一次（取首个映射，即最低地址 = 模块基址）
+        int dup = 0;
+        for (int i = 0; i < nseen; i++)
+            if (strcmp(seen[i], path) == 0) { dup = 1; break; }
+        if (dup)
+            continue;
+        if (nseen < 128)
+        {
+            strncpy(seen[nseen], path, sizeof(seen[0]) - 1);
+            seen[nseen][sizeof(seen[0]) - 1] = 0;
+            nseen++;
+        }
+
+        for (int k = 0; names[k]; k++)
+        {
+            uintptr_t a = find_symbol_remote(pid, start, names[k]);
+            if (a)
+            {
+                fclose(f);
+                dlopen_t r = {a, (k == 0) ? 0 : 1};
+                fprintf(stderr, "[injector] %s(模块 %s) = 0x%lx\n", names[k], path, a);
+                return r;
+            }
+        }
+    }
+    fclose(f);
+    return (dlopen_t){0, 0};
+}
 
 static dlopen_t get_dlopen_addr(pid_t pid)
 {
@@ -472,6 +541,12 @@ static dlopen_t get_dlopen_addr(pid_t pid)
             return r;
         }
     }
+
+    // 兜底：扫描目标进程全部已加载模块
+    fprintf(stderr, "[injector] 候选库均未命中，扫描全部已加载模块...\n");
+    dlopen_t all = find_dlopen_in_all_modules(pid);
+    if (all.addr)
+        return all;
 
     return r;
 }
@@ -579,6 +654,8 @@ static void usage(const char *prog)
 
 int main(int argc, char **argv)
 {
+    fprintf(stderr, "[injector] build " INJECTOR_BUILD "\n");
+
     const char *pkg = NULL;
     const char *so = NULL;
     pid_t pid = -1;
