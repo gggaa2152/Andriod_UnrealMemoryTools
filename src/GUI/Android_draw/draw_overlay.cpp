@@ -202,14 +202,9 @@ namespace
     }
 
     // ================= overlay 触摸校准 =================
-    // UE4 与 Unity 的关键区别:
-    //   - Unity: EGL Surface 可能降采样(如1520x1080)，需要 scale = EGL/View
-    //   - UE4:   EGL Surface 通常 = 屏幕物理分辨率，scale = 1.0 (无需缩放)
-    // AMotionEvent_getX/Y 返回 Window 本地坐标 (= 屏幕物理坐标 for 全屏 Activity)
-    // ImGui DisplaySize = EGL Surface 尺寸
-    // 当两者相等时 → 1:1 直通（与 main_8.cpp scale=1.0 等价）
-    static int g_screenPhysW = 0;
-    static int g_screenPhysH = 0;
+    // NDK AInputQueue 分发的 AMotionEvent_getX/Y 坐标直接对应当前 EGL 渲染 Surface 窗口像素空间。
+    // ImGui 的 DisplaySize 也正是 EGL Surface 尺寸 (g_win_w, g_win_h)。
+    // 因此两者天然 1:1 绝对像素对应，无需且绝不应使用带有写死 2400 回退的外部探针进行乘除缩放。
     static int g_touchLogCount = 0;
 
     void OverlayInputTransform(float *x, float *y)
@@ -217,27 +212,15 @@ namespace
         if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
             return;
 
-        // 调试日志：前20次触摸打印原始值，便于定位是缩放问题还是其他问题
+        // 调试日志：前 20 次触摸打印实时坐标，供验证绝对精度
         if (g_touchLogCount < 20)
         {
             g_touchLogCount++;
-            LOGI("[OV-TOUCH] #%d 原始坐标=(%.1f, %.1f) EGL=%dx%d phys=%dx%d",
-                 g_touchLogCount, *x, *y, g_win_w, g_win_h, g_screenPhysW, g_screenPhysH);
+            LOGI("[OV-TOUCH] #%d 触摸像素=(%.1f, %.1f) Surface=%dx%d",
+                 g_touchLogCount, *x, *y, g_win_w, g_win_h);
         }
 
-        // 仅当 EGL Surface 确实与屏幕物理不同时才缩放
-        // （UE4 通常相等，scale=1.0）
-        if (g_screenPhysW > 0 && g_screenPhysH > 0 &&
-            (g_screenPhysW != g_win_w || g_screenPhysH != g_win_h))
-        {
-            float scaleX = (float)g_win_w / (float)g_screenPhysW;
-            float scaleY = (float)g_win_h / (float)g_screenPhysH;
-            *x = *x * scaleX;
-            *y = *y * scaleY;
-        }
-        // 否则 1:1 直通，不做任何变换
-
-        // clamp
+        // 纯净 1:1 像素直通并做合法边界保护
         if (*x < 0.0f) *x = 0.0f;
         if (*x > (float)g_win_w) *x = (float)g_win_w;
         if (*y < 0.0f) *y = 0.0f;
@@ -257,18 +240,7 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
-        // 查询屏幕物理分辨率（仅在 EGL ≠ 屏幕 时才需要缩放）
-        auto disp = android::ANativeWindowCreator::GetDisplayInfo();
-        int physW = (disp.width >= disp.height) ? disp.width : disp.height;
-        int physH = (disp.width >= disp.height) ? disp.height : disp.width;
-        // GetDisplayInfo 失败时返回硬编码 2400x1080，此时不信任，用 EGL 尺寸
-        if (physW <= 0 || physH <= 0) { physW = w; physH = h; }
-        g_screenPhysW = physW;
-        g_screenPhysH = physH;
-
-        LOGI("[OV] EGL Surface=%dx%d, 屏幕物理=%dx%d, 需要缩放=%s",
-             g_win_w, g_win_h, g_screenPhysW, g_screenPhysH,
-             (g_screenPhysW != g_win_w || g_screenPhysH != g_win_h) ? "是" : "否(1:1直通)");
+        LOGI("[OV] EGL Surface=%dx%d (1:1 物理像素完美直通，无虚假缩放)", g_win_w, g_win_h);
 
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
@@ -293,8 +265,8 @@ namespace
         init_My_drawdata(dpiScale);
 
         g_ready = true;
-        LOGI("[OV] overlay 初始化完成 EGL=%dx%d 物理=%dx%d scale=%.2f",
-             w, h, g_screenPhysW, g_screenPhysH, dpiScale);
+        LOGI("[OV] overlay 初始化完成 EGL=%dx%d (1:1 像素级直通, scale=%.2f)",
+             w, h, dpiScale);
 
         // 自动执行探针 + SDK Dump（后台线程，菜单实时显示进度）
         std::thread(RunAutoProbeDump).detach();
