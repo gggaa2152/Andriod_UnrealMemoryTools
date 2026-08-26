@@ -5,6 +5,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
