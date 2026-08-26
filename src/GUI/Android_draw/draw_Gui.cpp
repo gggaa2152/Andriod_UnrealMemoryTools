@@ -58,9 +58,9 @@ bool M_Android_LoadFont(float SizePixels) {
 }
 void init_My_drawdata() {
     ImGui::StyleColorsDark(); //白色
-    ImGui::My_Android_LoadSystemFont(25.0f); //(加载系统字体 安卓15完美适配)
-    M_Android_LoadFont(25.0f); //加载字体(还有图标)
-    ImGui::GetStyle().ScaleAllSizes(3.25f);
+    ImGui::My_Android_LoadSystemFont(18.0f); //(加载系统字体 安卓15完美适配)
+    M_Android_LoadFont(18.0f); //加载字体(还有图标)
+    ImGui::GetStyle().ScaleAllSizes(1.0f);
     ::Aekun_image = graphics->LoadTextureFromMemory((void *)picture_ZhenAiKun_PNG_H, sizeof(picture_ZhenAiKun_PNG_H));
 }
 
@@ -100,10 +100,11 @@ void drawBegin() {
 
 void Layout_tick_UI(bool *main_thread_flag) {
     {
-        ImGui::SetNextWindowSize(ImVec2(1280.0f, 840.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ImVec2(90.0f, 110.0f), ImGuiCond_FirstUseEver);
+        // 适配 surface 1520x1080：菜单宽 1100 留出边距，标题栏+折叠箭头/关闭可见
+        ImGui::SetNextWindowSize(ImVec2(1100.0f, 760.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(40.0f, 30.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowBgAlpha(0.92f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 18.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.2f);
         // 使用 imgui 原生标题栏：左侧折叠箭头(收起菜单) + 拖动标题栏移动 + 右上角关闭
         ImGui::Begin("UnrealMemoryTools 控制台", main_thread_flag,
