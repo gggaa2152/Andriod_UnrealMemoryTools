@@ -71,15 +71,18 @@ namespace
         const auto maps = KittyMemoryEx::getAllMaps(getpid());
         bool anyHooked = false;
         int relocTotal = 0;
+        int scannedMods = 0, validMods = 0;
 
         for (const auto &m : maps)
         {
             if (m.pathname.find(".so") == std::string::npos)
                 continue;
+            scannedMods++;
 
             ElfScanner es = kMgr.elfScanner.createWithBase(m.startAddress);
             if (!es.isValid())
                 continue;
+            validMods++;
 
             const uintptr_t bias = es.loadBias();
             const uintptr_t strtab = es.stringTable();
@@ -143,13 +146,12 @@ namespace
                     // GOT 槽 = bias + r_offset
                     const uintptr_t slot = bias + rel.r_offset;
                     uintptr_t cur = 0;
-                    if (!kMgr.readMem(slot, &cur, sizeof(cur)))
-                        continue;
-                    if (cur != (uintptr_t)target)
-                    {
-                        LOGW("[OV] 槽 %p 当前值 %p != 目标 %p，跳过", (void *)slot, (void *)cur, target);
-                        continue;
-                    }
+                    kMgr.readMem(slot, &cur, sizeof(cur));
+
+                    // 不校验 cur == target：部分模块 lazy binding（槽未解析，指向 PLT stub），
+                    // 直接改写槽即可，hook 函数内部会调用 dlsym 保存的原函数。
+                    LOGI("[OV] 匹配 %s %s @ %p (cur=%p -> hook=%p)", m.pathname.c_str(),
+                         symName, (void *)slot, (void *)cur, hookFn);
 
                     // 解除 RELRO 只读保护后写入
                     const long pgsz = sysconf(_SC_PAGESIZE);
@@ -161,13 +163,12 @@ namespace
 
                     anyHooked = true;
                     relocTotal++;
-                    LOGI("[OV] hook %s %s: slot=%p -> %p", m.pathname.c_str(), symName,
-                         (void *)slot, hookFn);
                 }
             }
         }
 
-        LOGI("[OV] %s hook 完成，改写槽数 = %d", symName, relocTotal);
+        LOGI("[OV] %s hook 完成，改写槽数 = %d (扫描 .so 模块 %d / 有效 %d)",
+             symName, relocTotal, scannedMods, validMods);
         return anyHooked;
     }
 
