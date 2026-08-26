@@ -624,39 +624,41 @@ namespace Touch {
         float yt = y / touch_scale.y;
 
         if (otherTouch) {
+            // 平板/横屏原生触控传感器 (物理 X 为长边, Y 为短边)
             switch (orientation) {
-                case 1:
-                    x = yt;
-                    y = screenSize.x - xt;
-                    break;
-                case 2:
-                    x = screenSize.x - xt;
-                    y = screenSize.y - yt;
-                    break;
-                case 3:
-                    x = screenSize.y - yt;
-                    y = xt;
-                    break;
-                default:
+                case 1: // 主横屏 (90°)
                     x = xt;
                     y = yt;
                     break;
-            }
-        } else {
-            switch (orientation) {
-                case 1:
+                case 2: // 倒立竖屏 (180°)
+                    x = screenSize.y - yt;
+                    y = xt;
+                    break;
+                case 3: // 反向横屏 (270°)
+                    x = screenSize.x - xt;
+                    y = screenSize.y - yt;
+                    break;
+                default: // 正立竖屏 (0°)
                     x = yt;
                     y = screenSize.y - xt;
                     break;
-                case 2:
+            }
+        } else {
+            // 手机原生竖屏触控传感器 (物理 X 为短边 0..1080, Y 为长边 0..2400)
+            switch (orientation) {
+                case 1: // 主横屏 (90°，游戏最常用方向)
+                    x = yt;
+                    y = screenSize.y - xt;
+                    break;
+                case 2: // 倒立竖屏 (180°)
                     x = screenSize.y - xt;
                     y = screenSize.x - yt;
                     break;
-                case 3:
+                case 3: // 反向横屏 (270°)
                     x = screenSize.x - yt;
                     y = xt;
                     break;
-                default:
+                default: // 正立竖屏 (0°)
                     x = xt;
                     y = yt;
                     break;

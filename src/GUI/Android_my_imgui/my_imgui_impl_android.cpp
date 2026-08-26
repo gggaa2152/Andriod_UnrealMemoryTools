@@ -299,10 +299,7 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
 
             switch (event_action) {
                 case AMOTION_EVENT_ACTION_DOWN:
-                case AMOTION_EVENT_ACTION_UP:
-                    // Physical mouse buttons (and probably other physical devices) also invoke the actions AMOTION_EVENT_ACTION_DOWN/_UP,
-                    // but we have to process them separately to identify the actual button pressed. This is done below via
-                    // AMOTION_EVENT_ACTION_BUTTON_PRESS/_RELEASE. Here, we only process "FINGER" input (and "UNKNOWN", as a fallback).
+                case AMOTION_EVENT_ACTION_POINTER_DOWN:
                     if ((AMotionEvent_getToolType(input_event, event_pointer_index) == AMOTION_EVENT_TOOL_TYPE_FINGER)
                         || (AMotionEvent_getToolType(input_event, event_pointer_index) ==
                             AMOTION_EVENT_TOOL_TYPE_UNKNOWN)) {
@@ -310,7 +307,20 @@ int32_t My_ImGui_ImplAndroid_HandleInputEvent(AInputEvent *input_event) {
                         float my = AMotionEvent_getY(input_event, event_pointer_index);
                         ApplyInputTransform(&mx, &my);
                         io.AddMousePosEvent(mx, my);
-                        io.AddMouseButtonEvent(0, event_action == AMOTION_EVENT_ACTION_DOWN);
+                        io.AddMouseButtonEvent(0, true);
+                    }
+                    break;
+                case AMOTION_EVENT_ACTION_UP:
+                case AMOTION_EVENT_ACTION_POINTER_UP:
+                case AMOTION_EVENT_ACTION_CANCEL:
+                    if ((AMotionEvent_getToolType(input_event, event_pointer_index) == AMOTION_EVENT_TOOL_TYPE_FINGER)
+                        || (AMotionEvent_getToolType(input_event, event_pointer_index) ==
+                            AMOTION_EVENT_TOOL_TYPE_UNKNOWN)) {
+                        float mx = AMotionEvent_getX(input_event, event_pointer_index);
+                        float my = AMotionEvent_getY(input_event, event_pointer_index);
+                        ApplyInputTransform(&mx, &my);
+                        io.AddMousePosEvent(mx, my);
+                        io.AddMouseButtonEvent(0, false);
                     }
                     break;
                 case AMOTION_EVENT_ACTION_BUTTON_PRESS:

@@ -198,10 +198,37 @@ namespace
         return anyHooked;
     }
 
-    // ================= overlay 渲染 =================
-    // 坐标模型：AMotionEvent_getX / getY 经由 AInputQueue 分发给游戏窗口时，
-    // 坐标已经是游戏 Surface 本地像素坐标系 (0..g_win_w, 0..g_win_h)，
-    // 直接与 ImGui DisplaySize 1:1 精确对应，无需任何额外的 letterbox 缩放或偏移。
+    // ================= overlay 触摸校准 =================
+    // 当游戏渲染分辨率(EGL Surface, 如 1520x1080) 与 屏幕/窗口输入物理坐标系(如 2400x1080)
+    // 存在差异时，动态计算并校准触摸比例，确保点击位置与菜单完全 100% 像素级对齐。
+    static float g_touchMaxX = 0.0f;
+    static float g_touchMaxY = 0.0f;
+
+    void OverlayInputTransform(float *x, float *y)
+    {
+        if (!x || !y || g_win_w <= 0 || g_win_h <= 0)
+            return;
+
+        // 动态学习并自适应最大触摸边界
+        if (*x > g_touchMaxX) g_touchMaxX = *x;
+        if (*y > g_touchMaxY) g_touchMaxY = *y;
+
+        // 若物理触摸边界大于渲染 surface 尺寸，按比例进行自适应映射
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        if (g_touchMaxX > (float)g_win_w)
+            scaleX = (float)g_win_w / g_touchMaxX;
+        if (g_touchMaxY > (float)g_win_h)
+            scaleY = (float)g_win_h / g_touchMaxY;
+
+        *x = *x * scaleX;
+        *y = *y * scaleY;
+
+        if (*x < 0.0f) *x = 0.0f;
+        if (*x > (float)g_win_w) *x = (float)g_win_w;
+        if (*y < 0.0f) *y = 0.0f;
+        if (*y > (float)g_win_h) *y = (float)g_win_h;
+    }
 
     void OverlayInit(EGLDisplay dpy, EGLSurface srf)
     {
@@ -216,6 +243,23 @@ namespace
         g_win_w = w;
         g_win_h = h;
 
+        // 初始化触摸物理尺寸基准
+        auto disp = android::ANativeWindowCreator::GetDisplayInfo();
+        float maxDim = (float)(disp.height > disp.width ? disp.height : disp.width);
+        float minDimDisp = (float)(disp.height < disp.width ? disp.height : disp.width);
+        if (maxDim > 0.0f && minDimDisp > 0.0f) {
+            if (disp.orientation == 1 || disp.orientation == 3) {
+                g_touchMaxX = maxDim;
+                g_touchMaxY = minDimDisp;
+            } else {
+                g_touchMaxX = minDimDisp;
+                g_touchMaxY = maxDim;
+            }
+        } else {
+            g_touchMaxX = (float)g_win_w;
+            g_touchMaxY = (float)g_win_h;
+        }
+
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
         // 逻辑系 = 渲染 surface 尺寸（等比不拉伸，字体清晰，点位精准）
@@ -226,7 +270,7 @@ namespace
 
         ImGui_ImplOpenGL3_Init("#version 300 es");
         My_ImGui_ImplAndroid_Init(nullptr);
-        My_ImGui_ImplAndroid_SetInputTransform(nullptr);   // 坐标 1:1 直接映射，绝不偏移
+        My_ImGui_ImplAndroid_SetInputTransform(OverlayInputTransform);
 
         // 计算当前 Overlay 分辨率下的 DPI 缩放比例
         float minDim = (g_win_w < g_win_h) ? (float)g_win_w : (float)g_win_h;
@@ -239,7 +283,8 @@ namespace
         init_My_drawdata(dpiScale);
 
         g_ready = true;
-        LOGI("[OV] overlay 初始化完成 %dx%d (scale=%.2f, 复用游戏 GL context)", w, h, dpiScale);
+        LOGI("[OV] overlay 初始化完成 %dx%d (touchMax=%.0fx%.0f, scale=%.2f, 复用游戏 GL context)",
+             w, h, g_touchMaxX, g_touchMaxY, dpiScale);
 
         // 自动执行探针 + SDK Dump（后台线程，菜单实时显示进度）
         std::thread(RunAutoProbeDump).detach();

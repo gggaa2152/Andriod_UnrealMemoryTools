@@ -1850,10 +1850,22 @@ int ExecutableMain()
     {
         LOGI("[UI] 图形后端创建成功，获取屏幕信息...");
         ::screen_config();
-        ::native_window_screen_x = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-        ::native_window_screen_y = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-        ::abs_ScreenX = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
-        ::abs_ScreenY = (::displayInfo.height < ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        int32_t maxDim = (::displayInfo.height > ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        int32_t minDim = (::displayInfo.height < ::displayInfo.width ? ::displayInfo.height : ::displayInfo.width);
+        if (maxDim <= 0) maxDim = 2400;
+        if (minDim <= 0) minDim = 1080;
+
+        if (::displayInfo.orientation == 1 || ::displayInfo.orientation == 3) {
+            ::native_window_screen_x = maxDim;
+            ::native_window_screen_y = minDim;
+            ::abs_ScreenX = maxDim;
+            ::abs_ScreenY = minDim;
+        } else {
+            ::native_window_screen_x = minDim;
+            ::native_window_screen_y = maxDim;
+            ::abs_ScreenX = minDim;
+            ::abs_ScreenY = maxDim;
+        }
         LOGI("[UI] 屏幕: %dx%d (orientation=%d)", ::native_window_screen_x, ::native_window_screen_y, ::displayInfo.orientation);
 
         LOGI("[UI] 阶段2: 创建悬浮窗口 (SurfaceComposerClient)...");
