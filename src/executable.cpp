@@ -1546,7 +1546,14 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
 
     ImGui::BeginChild("##tool_root", ImVec2(0.0f, 0.0f), false);
 
-    ImGui::BeginChild("##sidebar", ImVec2(sidebarWidth, 0.0f), true);
+    if (ImGui::BeginTable("##main_layout_table", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV))
+    {
+        ImGui::TableSetupColumn("Sidebar", ImGuiTableColumnFlags_WidthFixed, sidebarWidth);
+        ImGui::TableSetupColumn("Workspace", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::BeginChild("##sidebar", ImVec2(0.0f, 0.0f), true);
     ImGui::Text("UnrealMemoryTools");
     ImGui::TextDisabled("UnrealEngine4.1x-5.0x");
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -1568,8 +1575,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     ImGui::TextDisabled("%s", Tr("禁止盗卖圈钱", "No reselling for profit"));
     ImGui::EndChild();
 
-    ImGui::SameLine(0.0f, 14.0f);
-
+    ImGui::TableSetColumnIndex(1);
     ImGui::BeginChild("##workspace", ImVec2(0.0f, 0.0f), false);
     ImGui::BeginChild("##topbar", ImVec2(0.0f, topBarHeight), true);
     ImGui::Text("%s", pageTitle);
@@ -1621,6 +1627,17 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
         {
             std::lock_guard<std::mutex> lock(gDumpUiState.mutex);
             gDumpUiState.logLines.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Tr("复制全部", "Copy All"), ImVec2(160.0f, 0.0f)))
+        {
+            std::lock_guard<std::mutex> lock(gDumpUiState.mutex);
+            std::string allLogs;
+            for (const auto& line : gDumpUiState.logLines)
+            {
+                allLogs += line + "\n";
+            }
+            ImGui::SetClipboardText(allLogs.c_str());
         }
         ImGui::Dummy(ImVec2(0.0f, 6.0f));
         if (ImGui::BeginChild("##logs_scroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar))
@@ -1779,6 +1796,8 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     }
 
     ImGui::EndChild();
+    ImGui::EndTable();
+    }
     ImGui::EndChild();
 
     ImGui::PopStyleColor(11);
