@@ -1019,8 +1019,30 @@ uintptr_t IGameProfile::GetNamesPtr() const
             {
                 uintptr_t val = 0;
                 memcpy(&val, buf.data() + i, kPtrSize);
-                if (val < kMinPtr || val > kMaxPtr)
-                    continue;
+                
+                bool isOutOfRange = (val < kMinPtr || val > kMaxPtr);
+                
+                if (kPtrValidator.isPtrReadable(val)) 
+                {
+                    char testBuf[128] = {};
+                    if (vm_rpm_ptr((void *)val, testBuf, 64)) 
+                    {
+                        if (isOutOfRange && std::strncmp(testBuf + 0x8, "ByteProperty", 12) == 0) {
+                            LOGE("[Debug] 确诊原因1：发现 FNamePool (指针=0x%lx)，但因为地址越界 (超出 0x4F...~0x7F...) 被原代码忽略！", val);
+                        }
+                        
+                        for (int offset = 0; offset < 52; offset++) {
+                            if (std::strncmp(testBuf + offset, "ByteProperty", 12) == 0) {
+                                if (offset != 0x8 && offset != 0x24) { 
+                                    LOGE("[Debug] 确诊原因2：游戏魔改了引擎！在指针 0x%lx 找到了 ByteProperty，但偏移变成了 0x%x (正常应为 0x8)！", val, offset);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (isOutOfRange) continue;
 
                 const uintptr_t candidate = seg.startAddress + base + i;
                 char strBuf0[64] = {};
@@ -1108,8 +1130,7 @@ uintptr_t IGameProfile::GetNativeAndroidApp() const
     auto ue_elf = GetUnrealELF();
     if (!ue_elf.isValid()) return 0;
 
-    constexpr uintptr_t kMinAppPtr = 0x4FFFFFFFFFULL;
-    constexpr uintptr_t kMaxAppPtr = 0x7FFFFFFFFFULL;
+
     constexpr size_t kChunk = 0x100000;
     std::vector<uint8_t> buffer(kChunk);
 
@@ -1129,7 +1150,7 @@ uintptr_t IGameProfile::GetNativeAndroidApp() const
                 uintptr_t val = 0;
                 memcpy(&val, buffer.data() + i, sizeof(uintptr_t));
                 uintptr_t decoded = FixTaggedPtr(val);
-                if (decoded < kMinAppPtr || decoded > kMaxAppPtr)
+                if (!kPtrValidator.isPtrReadable(decoded))
                     continue;
 
                 uintptr_t localeHolder = FixTaggedPtr(vm_rpm_ptr<uintptr_t>((void *)(decoded + 0x20)));
