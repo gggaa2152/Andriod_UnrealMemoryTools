@@ -50,7 +50,7 @@ std::vector<IGameProfile *> UE_Games = {
     new PUBGProfile(),
 };
 
-#define kUEDUMPER_VERSION "1.0.0"
+#define kUEDUMPER_VERSION "1.0.1"
 
 namespace
 {
@@ -1748,11 +1748,13 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     }
     else if (navPage == NavStructs)
     {
-        if (ImGui::BeginTable("##nav_structs_table", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoBordersInBody))
+        // 增加更清晰的可拖拽边框，使用按比例拉伸（SizingStretchProp），彻底解决无法左右拉伸的问题
+        if (ImGui::BeginTable("##nav_structs_table", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp))
         {
-            ImGui::TableSetupColumn("List", ImGuiTableColumnFlags_WidthFixed, 260.0f);
-            ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthFixed, 250.0f);
-            ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch);
+            // 按比例分配初始宽度：25% 25% 50%
+            ImGui::TableSetupColumn("List", ImGuiTableColumnFlags_None, 0.25f);
+            ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_None, 0.25f);
+            ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_None, 0.50f);
 
             ImGui::TableNextRow();
 
