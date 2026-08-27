@@ -347,18 +347,7 @@ namespace
             }
         }
 
-        // 🎯 屏幕右上角浮动快捷切换小药丸（单点直接切换 90°/270°/1:1）
-        ImGui::SetNextWindowPos(ImVec2((float)g_win_w - 240.0f, 12.0f), 0);
-        ImGui::SetNextWindowSize(ImVec2(230.0f, 42.0f), 0);
-        ImGui::Begin("##TouchDirSwitch", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
-        char btnText[64];
-        snprintf(btnText, sizeof(btnText), "🔄 触控:%s", (g_touchMode == 2 ? "270°(口在左)" : (g_touchMode == 1 ? "90°(口在右)" : "1:1直通")));
-        if (ImGui::Button(btnText, ImVec2(225.0f, 36.0f)))
-        {
-            g_touchMode = (g_touchMode == 1 ? 2 : (g_touchMode == 2 ? 0 : 1));
-            LOGI("[OV-TOUCH] 快捷切换触控方向 -> %s", (g_touchMode == 2 ? "270°" : (g_touchMode == 1 ? "90°" : "1:1")));
-        }
-        ImGui::End();
+
 
         ImGui::Render();
         glViewport(0, 0, g_win_w, g_win_h);
