@@ -661,11 +661,14 @@ int main(int argc, char **argv)
     pid_t pid = -1;
 
     int watch = 0;
+    int start_app = 0;
 
     for (int i = 1; i < argc; i++)
     {
         if (!strcmp(argv[i], "-w") || !strcmp(argv[i], "--watch"))
             watch = 1;
+        else if (!strcmp(argv[i], "-s") || !strcmp(argv[i], "--start"))
+            start_app = 1;
         else if (!strcmp(argv[i], "-n") && i + 1 < argc)
             pkg = argv[++i];
         else if (!strcmp(argv[i], "-p") && i + 1 < argc)
@@ -681,6 +684,18 @@ int main(int argc, char **argv)
 
     if (!so)
         so = "/data/1/libUnrealMemoryTools.so";
+
+    // 如果指定了启动游戏，直接调用系统命令拉起游戏，并强制进入 watch 模式
+    if (start_app && pkg) {
+        char cmd[256];
+        snprintf(cmd, sizeof(cmd), "monkey -p %s -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1", pkg);
+        fprintf(stderr, "[injector] 正在自动唤起游戏: %s\n", pkg);
+        system(cmd);
+        watch = 1; 
+    } else if (start_app && !pkg) {
+        fprintf(stderr, "[injector] 警告: 使用 -s 参数必须同时通过 -n 指定包名！\n");
+        return 1;
+    }
 
     if (watch) {
         fprintf(stderr, "[injector] 开启守候模式，等待游戏进程启动...\n");
