@@ -660,9 +660,13 @@ int main(int argc, char **argv)
     const char *so = NULL;
     pid_t pid = -1;
 
+    int watch = 0;
+
     for (int i = 1; i < argc; i++)
     {
-        if (!strcmp(argv[i], "-n") && i + 1 < argc)
+        if (!strcmp(argv[i], "-w") || !strcmp(argv[i], "--watch"))
+            watch = 1;
+        else if (!strcmp(argv[i], "-n") && i + 1 < argc)
             pkg = argv[++i];
         else if (!strcmp(argv[i], "-p") && i + 1 < argc)
             pid = (pid_t)atoi(argv[++i]);
@@ -677,6 +681,25 @@ int main(int argc, char **argv)
 
     if (!so)
         so = "/data/1/libUnrealMemoryTools.so";
+
+    if (watch) {
+        fprintf(stderr, "[injector] 开启守候模式，等待游戏进程启动...\n");
+        while (pid < 0) {
+            if (pkg) {
+                pid = find_pid_by_pkg(pkg);
+            } else {
+                pid_t cands[32];
+                char cpkgs[32][256];
+                if (find_ue_candidates(cands, cpkgs, 32) > 0) {
+                    pid = cands[0];
+                    fprintf(stderr, "[injector] 发现目标: %s (pid=%d)\n", cpkgs[0], pid);
+                }
+            }
+            if (pid < 0) {
+                usleep(50000); // 50ms 极速轮询
+            }
+        }
+    }
 
     if (pkg && pid < 0)
     {
