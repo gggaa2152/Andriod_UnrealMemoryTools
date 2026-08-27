@@ -373,6 +373,20 @@ namespace
         }
         return ret;
     }
+    static void* (*real_dlopen)(const char* filename, int flags) = nullptr;
+
+    void* hook_dlopen(const char* filename, int flags)
+    {
+        if (filename && strstr(filename, "libvulkan.so"))
+        {
+            LOGI("[OV] 拦截到游戏尝试加载 %s，强制返回 nullptr 以使其回退至 OpenGL！", filename);
+            return nullptr;
+        }
+        if (real_dlopen)
+            return real_dlopen(filename, flags);
+        // Fallback if real_dlopen is null
+        return nullptr;
+    }
 }  // namespace
 
 namespace OverlayUI
@@ -381,6 +395,11 @@ namespace OverlayUI
     {
         if (g_installed)
             return true;
+
+        // 拦截 Vulkan 加载，强制引擎退回 OpenGL 以便我们的 eglSwapBuffers Hook 能够生效
+        HookPltSymbol("libdl.so", "dlopen",
+                      (void *)hook_dlopen,
+                      (void **)&real_dlopen);
 
         if (!HookPltSymbol("libEGL.so", "eglSwapBuffers",
                            (void *)hook_eglSwapBuffers,
