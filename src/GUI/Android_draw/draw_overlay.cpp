@@ -330,22 +330,6 @@ namespace
 
         Layout_tick_UI(&g_menu_open);
 
-        // 🎯 屏幕实时触控光标轨迹可视化
-        if (io.MouseDown[0] || (io.MousePos.x >= 0.0f && io.MousePos.x <= (float)g_win_w && io.MousePos.y >= 0.0f && io.MousePos.y <= (float)g_win_h))
-        {
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            if (fg)
-            {
-                fg->AddCircleFilled(io.MousePos, 16.0f, IM_COL32(0, 255, 120, 180));
-                fg->AddCircle(io.MousePos, 22.0f, IM_COL32(255, 255, 255, 240), 0, 2.5f);
-                fg->AddLine(ImVec2(io.MousePos.x - 28, io.MousePos.y), ImVec2(io.MousePos.x + 28, io.MousePos.y), IM_COL32(255, 255, 0, 200), 1.5f);
-                fg->AddLine(ImVec2(io.MousePos.x, io.MousePos.y - 28), ImVec2(io.MousePos.x, io.MousePos.y + 28), IM_COL32(255, 255, 0, 200), 1.5f);
-
-                char tip[128];
-                snprintf(tip, sizeof(tip), "Touch: (%.1f, %.1f) Down:%d", io.MousePos.x, io.MousePos.y, io.MouseDown[0]);
-                fg->AddText(ImVec2(io.MousePos.x + 30, io.MousePos.y - 20), IM_COL32(255, 255, 0, 255), tip);
-            }
-        }
 
 
 

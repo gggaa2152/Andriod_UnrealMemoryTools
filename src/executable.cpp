@@ -1748,25 +1748,32 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     }
     else if (navPage == NavStructs)
     {
-        ImGui::BeginChild("##struct_left", ImVec2(260.0f, 0.0f), false);
-        drawStructListPane(Tr("结构列表", "Struct List"),
-                           Tr("这里只负责结构分组切换",
-                              "This column only handles struct group selection"));
-        ImGui::EndChild();
+        if (ImGui::BeginTable("##nav_structs_table", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_NoBordersInBody))
+        {
+            ImGui::TableSetupColumn("List", ImGuiTableColumnFlags_WidthFixed, 260.0f);
+            ImGui::TableSetupColumn("Summary", ImGuiTableColumnFlags_WidthFixed, 250.0f);
+            ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch);
 
-        ImGui::SameLine(0.0f, 14.0f);
+            ImGui::TableNextRow();
 
-        ImGui::BeginChild("##struct_mid", ImVec2(250.0f, 0.0f), false);
-        drawProbeSummaryPane(Tr("结构摘要", "Struct Summary"),
-                             Tr("补充展示当前探针成功后的结构摘要与偏移",
-                                "Shows offset and struct summary after a successful probe"),
-                             false);
-        ImGui::EndChild();
+            ImGui::TableSetColumnIndex(0);
+            drawStructListPane(Tr("结构列表", "Struct List"),
+                               Tr("这里只负责结构分组切换",
+                                  "This column only handles struct group selection"));
 
-        ImGui::SameLine(0.0f, 14.0f);
-        drawStructDetailPane(Tr("字段详情", "Field Details"),
-                             Tr("右侧只保留字段明细，不再混入操作按钮",
-                                "The right pane now stays focused on field details"));
+            ImGui::TableSetColumnIndex(1);
+            drawProbeSummaryPane(Tr("结构摘要", "Struct Summary"),
+                                 Tr("补充展示当前探针成功后的结构摘要与偏移",
+                                    "Shows offset and struct summary after a successful probe"),
+                                 false);
+
+            ImGui::TableSetColumnIndex(2);
+            drawStructDetailPane(Tr("字段详情", "Field Details"),
+                                 Tr("右侧只保留字段明细，不再混入操作按钮",
+                                    "The right pane now stays focused on field details"));
+
+            ImGui::EndTable();
+        }
     }
 
     ImGui::EndChild();
