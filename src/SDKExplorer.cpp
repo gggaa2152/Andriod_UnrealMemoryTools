@@ -409,7 +409,7 @@ namespace SDKExplorer
             if (ImGui::SmallButton(">>")) gPage = maxPage;
 
             ImGui::Dummy(ImVec2(0.0f, 8.0f));
-            if (ImGui::BeginChild("##objlist", ImVec2(0.0f, 0.0f), true))
+            if (ImGui::BeginChild("##objlist", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar))
             {
                 if (!searching)
                 {
@@ -1395,11 +1395,11 @@ namespace SDKExplorer
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10.0f, 8.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
 
-        ImGui::BeginChild("##sdkx_left", ImVec2(leftW, 0), true);
+        ImGui::BeginChild("##sdkx_left", ImVec2(leftW, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         ImGui::Text("%s", Tr("对象浏览器", "Object Browser"));
         ImGui::Separator();
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::BeginChild("##sdkx_left_top", ImVec2(0, avail.y * 0.52f), false))
+        if (ImGui::BeginChild("##sdkx_left_top", ImVec2(0, avail.y * 0.52f), false, ImGuiWindowFlags_HorizontalScrollbar))
             RenderObjectBrowser();
         ImGui::EndChild();
         ImGui::Separator();
@@ -1432,8 +1432,8 @@ namespace SDKExplorer
 
         ImGui::SameLine(0.0f, 12.0f);
 
-        ImGui::BeginChild("##sdkx_right", ImVec2(0, 0), true);
-        if (ImGui::BeginChild("##sdkx_right_top", ImVec2(0, avail.y * 0.58f), false))
+        ImGui::BeginChild("##sdkx_right", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+        if (ImGui::BeginChild("##sdkx_right_top", ImVec2(0, avail.y * 0.58f), false, ImGuiWindowFlags_HorizontalScrollbar))
         {
             ImGui::Text("%s", Tr("对象成员视图", "Object Inspector"));
             ImGui::Separator();

@@ -1185,12 +1185,12 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     auto drawProcessListPane = [&](const char *childId, const char *title, const char *subtitle)
     {
         ImGui::PushID(childId);
-        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true);
+        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
         drawSectionHeader(title, subtitle);
         if (ImGui::Button(Tr("刷新进程", "Refresh Processes"), ImVec2(-1.0f, 40.0f)) && !busy)
             RefreshCandidates();
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
-        if (ImGui::BeginChild("##process_list_card", ImVec2(0.0f, 0.0f), false))
+        if (ImGui::BeginChild("##process_list_card", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar))
         {
             for (int i = 0; i < static_cast<int>(gCandidates.size()); ++i)
             {
@@ -1236,7 +1236,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     auto drawProbeSummaryPane = [&](const char *title, const char *subtitle, bool withJumpToStructs)
     {
         ImGui::PushID(title);
-        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true);
+        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
         drawSectionHeader(title, subtitle);
         if (probeFinished && probeSuccess)
         {
@@ -1305,7 +1305,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     auto drawActionPanel = [&](const char *title, const char *subtitle, bool showRecentLogs)
     {
         ImGui::PushID(title);
-        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true);
+        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
         drawSectionHeader(title, subtitle);
 
         if (hasSelection)
@@ -1396,9 +1396,9 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     auto drawStructListPane = [&](const char *title, const char *subtitle)
     {
         ImGui::PushID(title);
-        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true);
+        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
         drawSectionHeader(title, subtitle);
-        if (hasData && ImGui::BeginChild("##struct_list_scroll", ImVec2(0.0f, 0.0f), false))
+        if (hasData && ImGui::BeginChild("##struct_list_scroll", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar))
         {
             for (int i = 0; i < static_cast<int>(probeStructGroups.size()); ++i)
             {
@@ -1423,7 +1423,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     auto drawStructDetailPane = [&](const char *title, const char *subtitle)
     {
         ImGui::PushID(title);
-        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true);
+        ImGui::BeginChild("##panel", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
         drawSectionHeader(title, subtitle);
         if (hasData && selectedStructIndex >= 0 &&
             selectedStructIndex < static_cast<int>(probeStructGroups.size()))
@@ -1497,6 +1497,7 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 24.0f);
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.07f, 0.09f, 0.13f, 0.96f));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.11f, 0.13f, 0.19f, 1.0f));
@@ -1800,8 +1801,8 @@ void RenderAutoUEDumpPanel(bool *main_thread_flag)
     }
     ImGui::EndChild();
 
-    ImGui::PopStyleColor(11);
-    ImGui::PopStyleVar(7);
+    ImGui::PopStyleColor(12);
+    ImGui::PopStyleVar(8);
 }
 
 
