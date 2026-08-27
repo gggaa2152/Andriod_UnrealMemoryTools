@@ -983,7 +983,7 @@ uintptr_t IGameProfile::GetNamesPtr() const
     if (!off)
         return 0;
 
-    const bool isDeltaForce = HasAppId(this, "com.tencent.tmgp.dfm");
+    const bool isDeltaForce = HasAppId(this, "com.tencent.tmgp.dfm") || HasAppId(this, "com.tencent.nrc");
     if (isDeltaForce)
     {
         if (uintptr_t names = BruteForceDeltaForceNames(this, ue_elf, off))
